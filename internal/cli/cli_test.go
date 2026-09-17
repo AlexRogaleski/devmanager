@@ -15,9 +15,13 @@ import (
 func rodar(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 
-	var buf bytes.Buffer
-	err := Run(args, &buf)
-	return buf.String(), err
+	var out bytes.Buffer
+	err := Run(args, IO{
+		In:  strings.NewReader(""),
+		Out: &out,
+		Err: &out,
+	})
+	return out.String(), err
 }
 
 func TestRunSemArgumentosMostraAjuda(t *testing.T) {

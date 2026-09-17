@@ -2,23 +2,31 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/AlexRogaleski/devmanager/internal/cli"
+	"github.com/AlexRogaleski/devmanager/internal/runner"
 )
 
-// main é deliberadamente minúscula. Toda a lógica está em cli.Run;
-// aqui só decidimos para onde vai o erro e com que código saímos.
-//
-// Por que não chamar os.Exit lá dentro? Porque os.Exit NÃO executa os
-// defers pendentes. Concentrando a saída num único ponto, o resto do
-// programa pode confiar que seus defers sempre rodam.
 func main() {
-	if err := cli.Run(os.Args[1:], os.Stdout); err != nil {
-		// Erro vai para stderr, não stdout: assim `devm version > arquivo`
-		// grava só a versão, e a mensagem de erro continua aparecendo no terminal.
-		fmt.Fprintln(os.Stderr, "devm:", err)
-		os.Exit(1)
+	stdio := cli.IO{In: os.Stdin, Out: os.Stdout, Err: os.Stderr}
+
+	err := cli.Run(os.Args[1:], stdio)
+	if err == nil {
+		return
 	}
+
+	// Se um processo filho rodou e saiu com código != 0, o devm sai com o
+	// MESMO código e sem mensagem própria — o comando já escreveu o erro dele
+	// no stderr. É isso que faz `devm artisan migrate && npm run build`
+	// se comportar igual a `php artisan migrate && npm run build`.
+	var saida *runner.ExitError
+	if errors.As(err, &saida) {
+		os.Exit(saida.Code)
+	}
+
+	fmt.Fprintln(os.Stderr, "devm:", err)
+	os.Exit(1)
 }

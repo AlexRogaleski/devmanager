@@ -1,0 +1,190 @@
+package runner
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/AlexRogaleski/devmanager/internal/runtimes"
+	"github.com/AlexRogaleski/devmanager/internal/semver"
+)
+
+// phpFalso cria um script que se comporta como um PHP para os nossos fins.
+func phpFalso(t *testing.T) runtimes.Runtime {
+	t.Helper()
+
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "php-falso")
+
+	// Imprime a versão e ecoa os argumentos, para podermos conferir o que
+	// chegou até ele.
+	script := "#!/bin/sh\necho \"php-falso 8.3.15 args:$*\"\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	return runtimes.Runtime{
+		Language: "php",
+		Version:  semver.MustParse("8.3.15"),
+		Bin:      bin,
+		Source:   "teste",
+	}
+}
+
+func TestEnsureShimCriaLink(t *testing.T) {
+	rt := phpFalso(t)
+	shimDir := filepath.Join(t.TempDir(), "shim")
+
+	if _, err := EnsureShim(shimDir, rt); err != nil {
+		t.Fatalf("EnsureShim falhou: %v", err)
+	}
+
+	alvo, err := os.Readlink(PHPPath(shimDir))
+	if err != nil {
+		t.Fatalf("link php não foi criado: %v", err)
+	}
+	if alvo != rt.Bin {
+		t.Errorf("link aponta para %q, esperava %q", alvo, rt.Bin)
+	}
+}
+
+// Trocar a versão do projeto tem que reapontar o link, não falhar por ele
+// já existir — é o caminho de `devm php use 8.4`.
+func TestEnsureShimEhIdempotenteEReaponta(t *testing.T) {
+	rt := phpFalso(t)
+	shimDir := filepath.Join(t.TempDir(), "shim")
+
+	if _, err := EnsureShim(shimDir, rt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureShim(shimDir, rt); err != nil {
+		t.Fatalf("segunda chamada falhou: %v", err)
+	}
+
+	outro := phpFalso(t)
+	if _, err := EnsureShim(shimDir, outro); err != nil {
+		t.Fatalf("reapontar falhou: %v", err)
+	}
+
+	alvo, _ := os.Readlink(PHPPath(shimDir))
+	if alvo != outro.Bin {
+		t.Errorf("link não foi reapontado: %q", alvo)
+	}
+}
+
+// O shim tem que entrar na FRENTE do PATH, senão os subprocessos caem no PHP
+// do sistema — o bug mais confuso que essa arquitetura pode produzir.
+func TestShimVemNaFrenteDoPath(t *testing.T) {
+	rt := phpFalso(t)
+	var saida bytes.Buffer
+
+	r := &Runner{
+		Runtime: rt,
+		Stdout:  &saida,
+		Stderr:  &saida,
+		ShimDir: filepath.Join(t.TempDir(), "shim"),
+	}
+
+	// "php" sem caminho: só encontra alguma coisa se o shim estiver no PATH.
+	if err := r.Run(context.Background(), "php", "-v"); err != nil {
+		t.Fatalf("Run falhou: %v", err)
+	}
+	if !strings.Contains(saida.String(), "php-falso") {
+		t.Errorf("executou outro php:\n%s", saida.String())
+	}
+	if !strings.Contains(saida.String(), "args:-v") {
+		t.Errorf("argumentos não chegaram ao filho:\n%s", saida.String())
+	}
+}
+
+func TestRunDefineVariaveisDeAmbiente(t *testing.T) {
+	rt := phpFalso(t)
+	var saida bytes.Buffer
+
+	r := &Runner{
+		Runtime: rt,
+		Stdout:  &saida,
+		Stderr:  &saida,
+		ShimDir: filepath.Join(t.TempDir(), "shim"),
+	}
+
+	if err := r.Run(context.Background(), "sh", "-c", "echo $DEVMANAGER/$DEVMANAGER_PHP"); err != nil {
+		t.Fatalf("Run falhou: %v", err)
+	}
+	if !strings.Contains(saida.String(), "1/"+rt.Bin) {
+		t.Errorf("ambiente do filho = %q", saida.String())
+	}
+}
+
+// Código de saída tem que ser repassado exatamente: é o que faz
+// `devm artisan migrate && deploy` se comportar como o comando original.
+func TestRunPropagaCodigoDeSaida(t *testing.T) {
+	rt := phpFalso(t)
+	var saida bytes.Buffer
+
+	r := &Runner{
+		Runtime: rt,
+		Stdout:  &saida,
+		Stderr:  &saida,
+		ShimDir: filepath.Join(t.TempDir(), "shim"),
+	}
+
+	err := r.Run(context.Background(), "sh", "-c", "exit 42")
+	if err == nil {
+		t.Fatal("esperava erro para saída != 0")
+	}
+
+	var saiu *ExitError
+	if !errors.As(err, &saiu) {
+		t.Fatalf("erro = %T, esperava *ExitError", err)
+	}
+	if saiu.Code != 42 {
+		t.Errorf("Code = %d, esperava 42", saiu.Code)
+	}
+}
+
+func TestRunComandoInexistente(t *testing.T) {
+	rt := phpFalso(t)
+	r := &Runner{
+		Runtime: rt,
+		Stdout:  io_Discard(),
+		Stderr:  io_Discard(),
+		ShimDir: filepath.Join(t.TempDir(), "shim"),
+	}
+
+	err := r.Run(context.Background(), "comando-que-nao-existe-mesmo")
+	if err == nil {
+		t.Fatal("esperava erro")
+	}
+	// Um comando que nem existe NÃO é ExitError: nada rodou para sair com código.
+	var saiu *ExitError
+	if errors.As(err, &saiu) {
+		t.Error("comando inexistente não deveria virar ExitError")
+	}
+}
+
+// Sem ShimDir, o Runner usa um diretório temporário e o remove no fim.
+func TestShimTemporarioEhRemovido(t *testing.T) {
+	rt := phpFalso(t)
+	var saida bytes.Buffer
+
+	r := &Runner{Runtime: rt, Stdout: &saida, Stderr: &saida}
+
+	if err := r.Run(context.Background(), "sh", "-c", "echo $PATH | cut -d: -f1"); err != nil {
+		t.Fatal(err)
+	}
+
+	usado := strings.TrimSpace(saida.String())
+	if usado == "" {
+		t.Fatal("não consegui capturar o shim usado")
+	}
+	if _, err := os.Stat(usado); !os.IsNotExist(err) {
+		t.Errorf("o shim temporário %s não foi removido", usado)
+	}
+}
+
+func io_Discard() *bytes.Buffer { return &bytes.Buffer{} }
