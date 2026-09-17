@@ -89,6 +89,28 @@ case "$1" in
     # volume rm <vol>
     rm -f "$ESTADO/volumes/$3" ;;
 
+  exec)
+    # exec <container> <comando...>
+    cont="$2"
+    # Só responde se o contêiner estiver rodando — é o que faz a sonda de
+    # prontidão falhar de verdade quando o serviço não existe.
+    [ -f "$ESTADO/rodando/$cont" ] || { echo "contêiner não está rodando: $cont" >&2; exit 1; }
+    shift 2
+    mkdir -p "$ESTADO/bancos"
+    case "$1" in
+      pg_isready|redis-cli|mysqladmin|mariadb-admin)
+        exit 0 ;;
+      psql)
+        db=$(echo "$*" | sed -n "s/.*datname = '\([^']*\)'.*/\1/p")
+        [ -n "$db" ] && [ -f "$ESTADO/bancos/$db" ] && echo 1 || true ;;
+      createdb)
+        touch "$ESTADO/bancos/$(echo "$@" | awk '{print $NF}')" ;;
+      mysql|mariadb)
+        exit 0 ;;
+      *)
+        exit 0 ;;
+    esac ;;
+
   *)
     echo "comando não suportado pelo engine falso: $1" >&2
     exit 1 ;;

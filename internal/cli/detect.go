@@ -151,6 +151,12 @@ func printProject(w io.Writer, p *project.Project, php resultadoPHP) {
 
 	fmt.Fprintf(w, "  %-10s falta preparar (rode `devm up`)\n", "Estado")
 	for _, passo := range pendencias {
-		fmt.Fprintf(w, "  %-10s → %s\n", "", passo)
+		linha := passo.Nome
+		if passo.Bloqueado != "" {
+			// Distinguir "falta fazer" de "não dá para fazer" evita o usuário
+			// rodar `devm up` esperando resolver algo que precisa de outra ação.
+			linha += "  (" + passo.Bloqueado + ")"
+		}
+		fmt.Fprintf(w, "  %-10s → %s\n", "", linha)
 	}
 }

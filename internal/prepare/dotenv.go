@@ -1,48 +1,24 @@
 package prepare
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
+	"github.com/AlexRogaleski/devmanager/internal/dotenv"
 	"github.com/AlexRogaleski/devmanager/internal/project"
 )
 
-// lerEnv faz uma leitura simples de um arquivo .env.
+// lerEnv delega ao pacote dotenv, ignorando o erro.
 //
-// Não é um parser completo de dotenv — não expande variáveis nem trata
-// multilinha. É o suficiente para o que precisamos: saber se APP_KEY está
-// preenchida e qual driver de banco o projeto usa. Um parser completo seria
-// uma dependência a mais para responder duas perguntas.
+// Aqui só queremos inspecionar: um .env ilegível significa "não sei o que tem
+// dentro", e o plano trata isso como ausência de configuração. Quem grava no
+// arquivo — o passo de serviço — usa dotenv.Set direto e propaga o erro.
 func lerEnv(caminho string) map[string]string {
-	valores := map[string]string{}
-
-	f, err := os.Open(caminho)
+	valores, err := dotenv.Load(caminho)
 	if err != nil {
-		return valores
-	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		linha := strings.TrimSpace(scanner.Text())
-		if linha == "" || strings.HasPrefix(linha, "#") {
-			continue
-		}
-
-		// Cut divide no PRIMEIRO "=" apenas: valores podem conter "=",
-		// como acontece justamente com as chaves em base64.
-		chave, valor, ok := strings.Cut(linha, "=")
-		if !ok {
-			continue
-		}
-
-		valor = strings.TrimSpace(valor)
-		valor = strings.Trim(valor, `"'`)
-		valores[strings.TrimSpace(chave)] = valor
+		return map[string]string{}
 	}
 	return valores
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/AlexRogaleski/devmanager/internal/config"
+	"github.com/AlexRogaleski/devmanager/internal/prepare"
 	"github.com/AlexRogaleski/devmanager/internal/project"
 	"github.com/AlexRogaleski/devmanager/internal/supervisor"
 )
@@ -65,7 +67,9 @@ func startCmd(stdio IO, args []string) error {
 		}
 	}
 
+	ctx := context.Background()
 	w := stdio.Out
+
 	fmt.Fprintf(w, "%s  (%s)\n", p.Name, p.Kind)
 	fmt.Fprintf(w, "PHP     %s\n\n", rt.Version)
 
@@ -74,6 +78,13 @@ func startCmd(stdio IO, args []string) error {
 			fmt.Fprintf(w, "  %-8s %s\n", proc.Nome, proc.Linha)
 		}
 		return nil
+	}
+
+	// Os serviços sobem ANTES dos processos: um artisan serve que inicia sem
+	// o banco de pé falha na primeira requisição, e o erro apareceria como
+	// problema da aplicação.
+	if err := garantirServicos(ctx, w, p, r); err != nil {
+		return err
 	}
 
 	if temServidor(processos) {
@@ -87,7 +98,7 @@ func startCmd(stdio IO, args []string) error {
 		Cores:     ehTerminal(w),
 	}
 
-	err = s.Run(context.Background())
+	err = s.Run(ctx)
 
 	// Um processo ter terminado não é falha da ferramenta: o servidor pode
 	// ter caído por um erro no código do usuário. Reportamos e saímos com 1,
@@ -97,6 +108,43 @@ func startCmd(stdio IO, args []string) error {
 		return &sairComCodigo{codigo: 1}
 	}
 	return err
+}
+
+// garantirServicos sobe os serviços declarados pelo projeto.
+//
+// Reaproveita o MESMO plano do `devm up`, filtrando só os passos de serviço.
+// Duplicar a lógica aqui faria o start e o up divergirem com o tempo — foi
+// para evitar exatamente isso que o pacote prepare existe.
+func garantirServicos(ctx context.Context, w io.Writer, p *project.Project, ex prepare.Executor) error {
+	m := servicosDoProjeto(ctx, w, p)
+	if m == nil {
+		return nil
+	}
+
+	pendentes := prepare.Pendentes(prepare.Plano(p, ex, prepare.Opcoes{
+		Servicos: m,
+		SemNode:  true,
+		Saida:    w,
+	}))
+
+	var deServico []prepare.Passo
+	for _, passo := range pendentes {
+		if strings.HasPrefix(passo.Nome, "serviço ") {
+			deServico = append(deServico, passo)
+		}
+	}
+	if len(deServico) == 0 {
+		return nil
+	}
+
+	for _, passo := range deServico {
+		fmt.Fprintf(w, "%s...\n", passo.Nome)
+		if err := passo.Executar(ctx); err != nil {
+			return fmt.Errorf("%s: %w", passo.Nome, err)
+		}
+	}
+	fmt.Fprintln(w)
+	return nil
 }
 
 // montarProcessos decide o que subir.

@@ -13,6 +13,20 @@ type Porta struct {
 	Rotulo  string // "smtp", "web" — para serviços com mais de uma porta
 }
 
+// TipoBanco identifica o dialeto de banco de dados de um serviço.
+//
+// É um enum, e não uma função guardada no catálogo, para que a Definicao
+// continue sendo dado puro — serializável e inspecionável. A lógica de cada
+// dialeto fica no código que provisiona.
+type TipoBanco string
+
+const (
+	BancoNenhum   TipoBanco = ""
+	BancoPostgres TipoBanco = "postgres"
+	BancoMySQL    TipoBanco = "mysql"
+	BancoMariaDB  TipoBanco = "mariadb"
+)
+
 // Definicao descreve um serviço que o Dev Manager sabe subir.
 type Definicao struct {
 	Nome         string
@@ -24,6 +38,18 @@ type Definicao struct {
 	// VolumeInterno é o caminho, dentro do contêiner, que guarda os dados.
 	// Vazio significa serviço sem estado, como o Mailpit.
 	VolumeInterno string
+
+	// Banco indica o dialeto, quando o serviço é um banco de dados.
+	Banco TipoBanco
+
+	// Prontidao é o comando rodado DENTRO do contêiner para saber se o
+	// serviço já aceita conexões.
+	//
+	// Existe porque `run --detach` retorna assim que o contêiner INICIA, não
+	// quando o serviço está pronto: um PostgreSQL recém-criado leva alguns
+	// segundos inicializando o cluster, e um CREATE DATABASE nesse intervalo
+	// falha com "connection refused".
+	Prontidao []string
 
 	// Descricao aparece no `devm service catalog`.
 	Descricao string
@@ -48,6 +74,8 @@ var catalogo = map[string]Definicao{
 			"POSTGRES_DB":       "laravel",
 		},
 		VolumeInterno: "/var/lib/postgresql/data",
+		Banco:         BancoPostgres,
+		Prontidao:     []string{"pg_isready", "-U", "laravel", "-d", "postgres", "-q"},
 		Descricao:     "banco de dados PostgreSQL",
 	},
 	"mysql": {
@@ -62,6 +90,8 @@ var catalogo = map[string]Definicao{
 			"MYSQL_PASSWORD":      "secret",
 		},
 		VolumeInterno: "/var/lib/mysql",
+		Banco:         BancoMySQL,
+		Prontidao:     []string{"mysqladmin", "ping", "-uroot", "-psecret", "--silent"},
 		Descricao:     "banco de dados MySQL",
 	},
 	"mariadb": {
@@ -76,6 +106,8 @@ var catalogo = map[string]Definicao{
 			"MARIADB_PASSWORD":      "secret",
 		},
 		VolumeInterno: "/var/lib/mysql",
+		Banco:         BancoMariaDB,
+		Prontidao:     []string{"mariadb-admin", "ping", "-uroot", "-psecret", "--silent"},
 		Descricao:     "banco de dados MariaDB",
 	},
 	"redis": {
@@ -84,6 +116,7 @@ var catalogo = map[string]Definicao{
 		VersaoPadrao:  "8",
 		Portas:        []Porta{{Host: 6379, Interna: 6379}},
 		VolumeInterno: "/data",
+		Prontidao:     []string{"redis-cli", "ping"},
 		Descricao:     "cache e filas Redis",
 	},
 	"mailpit": {

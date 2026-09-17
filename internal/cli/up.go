@@ -7,6 +7,7 @@ import (
 
 	"github.com/AlexRogaleski/devmanager/internal/prepare"
 	"github.com/AlexRogaleski/devmanager/internal/project"
+	"github.com/AlexRogaleski/devmanager/internal/services"
 )
 
 // upCmd prepara o projeto para rodar.
@@ -48,7 +49,12 @@ func upCmd(stdio IO, args []string) error {
 	fmt.Fprintf(w, "%s  (%s)\n", p.Name, p.Kind)
 	fmt.Fprintf(w, "PHP     %s  (%s)\n\n", rt.Version, rt.Source)
 
-	opts := prepare.Opcoes{Migrate: *migrate, SemNode: *semNode}
+	opts := prepare.Opcoes{
+		Migrate:  *migrate,
+		SemNode:  *semNode,
+		Saida:    w,
+		Servicos: servicosDoProjeto(ctx, w, p),
+	}
 
 	// Garante o composer ANTES de montar o plano: o passo precisa saber qual
 	// comando vai executar. Sem isso, cairíamos no composer do PATH — que é
@@ -89,8 +95,10 @@ func upCmd(stdio IO, args []string) error {
 		return nil
 	}
 
-	for i, passo := range pendentes {
-		fmt.Fprintf(w, "\n[%d/%d] %s\n", i+1, len(pendentes), passo.Nome)
+	executaveis, bloqueados := prepare.Executaveis(pendentes)
+
+	for i, passo := range executaveis {
+		fmt.Fprintf(w, "\n[%d/%d] %s\n", i+1, len(executaveis), passo.Nome)
 
 		if err := passo.Executar(ctx); err != nil {
 			// Para no primeiro erro: os passos são ordenados por dependência,
@@ -100,21 +108,51 @@ func upCmd(stdio IO, args []string) error {
 		}
 	}
 
+	if len(bloqueados) > 0 {
+		fmt.Fprintln(w, "\nficou pendente:")
+		for _, passo := range bloqueados {
+			fmt.Fprintf(w, "  %s — %s\n", passo.Nome, passo.Bloqueado)
+		}
+		fmt.Fprintln(w, "\nprojeto preparado, mas não completo")
+		return nil
+	}
+
 	fmt.Fprintln(w, "\nprojeto pronto")
 	if p.IsLaravel() {
-		fmt.Fprintf(w, "  devm artisan serve   →  http://%s\n", p.Domain())
+		fmt.Fprintln(w, "  devm start   sobe servidor e frontend")
 	}
 	return nil
 }
 
-// resumoPendencias devolve os nomes dos passos pendentes, para o detect.
+// resumoPendencias devolve os passos pendentes, para o detect.
 //
 // Usa o MESMO Plano do devm up, com executor nil. É isso que impede o
 // diagnóstico e a ação de divergirem com o tempo.
-func resumoPendencias(p *project.Project) []string {
-	var nomes []string
-	for _, passo := range prepare.Pendentes(prepare.Plano(p, nil, prepare.Opcoes{})) {
-		nomes = append(nomes, passo.Nome)
+//
+// O gerenciador de serviços é consultado aqui também, e em silêncio: sem ele
+// o plano não sabe quais contêineres já estão rodando, e o detect reportaria
+// como pendente um serviço que o up considera pronto. Um diagnóstico que
+// discorda da ação é pior que nenhum diagnóstico.
+func resumoPendencias(p *project.Project) []prepare.Passo {
+	return prepare.Pendentes(prepare.Plano(p, nil, prepare.Opcoes{
+		Servicos: servicosSilencioso(p),
+	}))
+}
+
+// servicosSilencioso detecta o engine sem imprimir avisos.
+//
+// O detect é um relatório: encher a saída com "instale o podman" no meio das
+// informações do projeto atrapalharia a leitura. Quem avisa é o up, que é
+// quem ia usar o engine.
+func servicosSilencioso(p *project.Project) *services.Manager {
+	specs, err := prepare.SpecsDoProjeto(p)
+	if err != nil || len(specs) == 0 {
+		return nil
 	}
-	return nomes
+
+	engine, err := services.Detectar(context.Background())
+	if err != nil {
+		return nil
+	}
+	return &services.Manager{Engine: engine}
 }

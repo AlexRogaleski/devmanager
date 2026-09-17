@@ -116,7 +116,15 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (Servico, error) {
 
 	switch estado {
 	case EstadoRodando:
-		return servicoDoNome(spec.Container()), nil
+		// Portas REAIS, não as do catálogo: o contêiner pode ter sido criado
+		// antes com --port, e devolver a porta oficial faria o .env do
+		// projeto apontar para o lugar errado.
+		s := servicoDoNome(spec.Container())
+		s.Estado = EstadoRodando
+		if portas := m.portasReais(ctx, spec.Container()); len(portas) > 0 {
+			s.Portas = portas
+		}
+		return s, nil
 
 	case EstadoParado:
 		// Contêiner já existe com a configuração de antes: só religamos.
@@ -126,6 +134,9 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (Servico, error) {
 		}
 		s := servicoDoNome(spec.Container())
 		s.Estado = EstadoRodando
+		if portas := m.portasReais(ctx, spec.Container()); len(portas) > 0 {
+			s.Portas = portas
+		}
 		return s, nil
 	}
 
@@ -433,4 +444,58 @@ type PortaOcupadaError struct {
 func (e *PortaOcupadaError) Error() string {
 	return fmt.Sprintf("a porta %d, necessária para %s, já está em uso\n"+
 		"  pare quem está usando, ou rode outro serviço nessa porta", e.Porta, e.Servico)
+}
+
+// AjustarPortasOcupadas troca portas em uso por portas livres.
+//
+// Sem isso, declarar `postgres:17` num projeto falharia em toda máquina que
+// já tenha um PostgreSQL nativo escutando na 5432 — situação comum, e que o
+// usuário não pediu para resolver. A política é: a porta oficial é a
+// preferida, mas nunca um impedimento.
+//
+// A troca é SEMPRE reportada nas notas devolvidas. Escolher uma porta
+// diferente sem avisar produziria a pior confusão possível: um cliente de
+// banco apontado para 5432 conversando com o servidor errado.
+func (m *Manager) AjustarPortasOcupadas(spec Spec) (Spec, []string) {
+	checar := m.PortaLivre
+	if checar == nil {
+		checar = portaLivre
+	}
+
+	var notas []string
+	ajustada := spec
+	ajustada.Portas = make([]Porta, len(spec.Portas))
+	copy(ajustada.Portas, spec.Portas)
+
+	for i, p := range ajustada.Portas {
+		if checar(p.Host) == nil {
+			continue
+		}
+
+		nova, err := portaLivreQualquer()
+		if err != nil {
+			continue // sem porta livre: deixa como estava e falha adiante
+		}
+
+		rotulo := p.Rotulo
+		if rotulo == "" {
+			rotulo = "porta"
+		}
+		notas = append(notas, fmt.Sprintf("%s: %d estava ocupada, usando %d (%s)",
+			spec.Nome, p.Host, nova, rotulo))
+
+		ajustada.Portas[i].Host = nova
+	}
+	return ajustada, notas
+}
+
+// portaLivreQualquer pede ao kernel uma porta disponível.
+func portaLivreQualquer() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+
+	return l.Addr().(*net.TCPAddr).Port, nil
 }

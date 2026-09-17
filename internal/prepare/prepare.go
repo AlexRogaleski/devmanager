@@ -10,10 +10,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/AlexRogaleski/devmanager/internal/project"
+	"github.com/AlexRogaleski/devmanager/internal/services"
 )
 
 // Executor roda um comando no ambiente do projeto.
@@ -42,15 +44,39 @@ type Passo struct {
 	// Pendente indica se ainda precisa ser executado.
 	Pendente bool
 
+	// Bloqueado explica por que o passo não pode rodar AGORA, mesmo estando
+	// pendente. Vazio significa executável.
+	//
+	// A distinção entre "pendente" e "bloqueado" importa: sem ela, faltar
+	// podman na máquina faria o devm up abortar no meio, deixando de instalar
+	// as dependências de frontend que vinham depois. Com ela, o diagnóstico
+	// continua completo e o que dá para fazer é feito.
+	Bloqueado string
+
 	executar func(ctx context.Context) error
 }
 
 // Executar roda o passo.
 func (p Passo) Executar(ctx context.Context) error {
+	if p.Bloqueado != "" {
+		return fmt.Errorf("%s: %s", p.Nome, p.Bloqueado)
+	}
 	if p.executar == nil {
 		return ErrSemExecutor
 	}
 	return p.executar(ctx)
+}
+
+// Executaveis separa os passos que podem rodar dos que estão bloqueados.
+func Executaveis(passos []Passo) (executaveis, bloqueados []Passo) {
+	for _, p := range passos {
+		if p.Bloqueado != "" {
+			bloqueados = append(bloqueados, p)
+			continue
+		}
+		executaveis = append(executaveis, p)
+	}
+	return executaveis, bloqueados
 }
 
 // Opcoes ajusta o que entra no plano.
@@ -67,6 +93,17 @@ type Opcoes struct {
 	// por exemplo ["/caminho/php", "/caminho/composer.phar"]. Vazio cai para
 	// o "composer" do PATH, que funciona mas não garante a versão de PHP.
 	Composer []string
+
+	// Saida recebe detalhes que um passo precise reportar durante a execução,
+	// como uma porta trocada. Pode ser nil.
+	Saida io.Writer
+
+	// Servicos sobe os serviços declarados no devmanager.yaml.
+	//
+	// Nil mantém os serviços no plano, marcados como pendentes, mas sem poder
+	// executá-los — é o que acontece quando não há podman nem docker na
+	// máquina. O diagnóstico continua correto; só a ação fica indisponível.
+	Servicos *services.Manager
 }
 
 // Plano monta a lista ordenada de passos para preparar o projeto.
@@ -85,6 +122,18 @@ func Plano(p *project.Project, ex Executor, opts Opcoes) []Passo {
 		passos = append(passos, passoAppKey(p, ex))
 	}
 
+	// Os serviços vêm DEPOIS do .env: eles gravam credenciais nele, e gravar
+	// antes do arquivo existir perderia a configuração no passo seguinte,
+	// quando o .env.example fosse copiado por cima.
+	//
+	// Um erro na lista de serviços é ignorado aqui de propósito: o plano
+	// precisa continuar utilizável para que os outros passos rodem. Quem
+	// reclama do devmanager.yaml inválido é o SpecsDoProjeto, chamado pela CLI.
+	specs, _ := SpecsDoProjeto(p)
+	for _, spec := range specs {
+		passos = append(passos, passoServico(p, opts, spec))
+	}
+
 	if !opts.SemNode {
 		if passo, ok := passoNode(p, ex); ok {
 			passos = append(passos, passo)
@@ -92,8 +141,12 @@ func Plano(p *project.Project, ex Executor, opts Opcoes) []Passo {
 	}
 
 	if p.IsLaravel() {
-		if passo, ok := passoSQLite(p); ok {
-			passos = append(passos, passo)
+		// Projeto que declarou um banco de verdade não precisa do arquivo
+		// SQLite: seriam duas configurações de banco e uma delas ignorada.
+		if !temBancoDeDados(specs) {
+			if passo, ok := passoSQLite(p); ok {
+				passos = append(passos, passo)
+			}
 		}
 		if opts.Migrate {
 			passos = append(passos, passoMigrate(p, ex))
