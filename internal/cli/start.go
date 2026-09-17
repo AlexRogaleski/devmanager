@@ -2,18 +2,14 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"net"
-	"os"
-	"path/filepath"
-	"slices"
 	"strings"
 
-	"github.com/AlexRogaleski/devmanager/internal/config"
+	"github.com/AlexRogaleski/devmanager/internal/daemon"
+	"github.com/AlexRogaleski/devmanager/internal/environment"
 	"github.com/AlexRogaleski/devmanager/internal/prepare"
 	"github.com/AlexRogaleski/devmanager/internal/project"
 	"github.com/AlexRogaleski/devmanager/internal/supervisor"
@@ -29,12 +25,19 @@ func startCmd(stdio IO, args []string) error {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	fs.SetOutput(stdio.Out)
 
+	semNode := fs.Bool("no-node", false, "não sobe os processos de frontend")
 	apenas := fs.String("only", "", "sobe apenas estes processos (separados por vírgula)")
 	porta := fs.Int("port", 0, "porta do servidor (padrão: uma porta livre)")
 	listar := fs.Bool("list", false, "mostra os processos configurados e sai")
+	destacar := fs.Bool("d", false, "sobe em segundo plano, via daemon")
+	fs.BoolVar(destacar, "detach", false, "o mesmo que -d")
 
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
+	}
+
+	if *destacar {
+		return startDestacadoCmd(stdio, *porta, *apenas, *semNode)
 	}
 
 	p, r, err := ambienteDoProjeto()
@@ -49,19 +52,19 @@ func startCmd(stdio IO, args []string) error {
 	}
 
 	if *porta == 0 {
-		*porta, err = portaLivre()
+		*porta, err = environment.PortaLivre()
 		if err != nil {
 			return err
 		}
 	}
 
-	processos, err := montarProcessos(p, *porta)
+	processos, err := environment.Processos(p, *porta)
 	if err != nil {
 		return err
 	}
 
 	if *apenas != "" {
-		processos, err = filtrar(processos, *apenas)
+		processos, err = environment.Filtrar(processos, strings.Split(*apenas, ","))
 		if err != nil {
 			return err
 		}
@@ -87,7 +90,7 @@ func startCmd(stdio IO, args []string) error {
 		return err
 	}
 
-	if temServidor(processos) {
+	if environment.TemServidor(processos) {
 		fmt.Fprintf(w, "servidor em http://127.0.0.1:%d\n\n", *porta)
 	}
 
@@ -147,148 +150,59 @@ func garantirServicos(ctx context.Context, w io.Writer, p *project.Project, ex p
 	return nil
 }
 
-// montarProcessos decide o que subir.
-//
-// O devmanager.yaml, quando define processes, tem a palavra final: o projeto
-// sabe melhor que a ferramenta o que precisa rodar. Sem ele, montamos um
-// padrão a partir do que o projeto É — um Laravel com package.json quer
-// servidor e bundler.
-func montarProcessos(p *project.Project, porta int) ([]supervisor.Processo, error) {
-	if p.Config != nil && len(p.Config.Processes) > 0 {
-		nomes := make([]string, 0, len(p.Config.Processes))
-		for nome := range p.Config.Processes {
-			nomes = append(nomes, nome)
-		}
-		// Ordem de iteração de map em Go é ALEATÓRIA de propósito, para
-		// impedir que alguém dependa dela. Ordenamos para que a saída seja
-		// a mesma a cada execução.
-		slices.Sort(nomes)
-
-		procs := make([]supervisor.Processo, 0, len(nomes))
-		for _, nome := range nomes {
-			procs = append(procs, supervisor.Processo{Nome: nome, Linha: p.Config.Processes[nome]})
-		}
-		return procs, nil
-	}
-
-	var procs []supervisor.Processo
-
-	if p.IsLaravel() {
-		procs = append(procs, supervisor.Processo{
-			Nome:  "serve",
-			Linha: fmt.Sprintf("php artisan serve --host=127.0.0.1 --port=%d", porta),
-		})
-	}
-
-	if script, ok := scriptDeFrontend(p.Path); ok {
-		procs = append(procs, supervisor.Processo{Nome: "vite", Linha: script})
-	}
-
-	if len(procs) == 0 {
-		return nil, fmt.Errorf(
-			"nenhum processo para rodar neste projeto\n"+
-				"  declare processes no %s, por exemplo:\n\n"+
-				"  processes:\n    serve: php artisan serve\n    queue: php artisan queue:work\n",
-			config.FileName)
-	}
-	return procs, nil
-}
-
-// scriptDeFrontend descobre o comando de desenvolvimento do package.json.
-//
-// Procuramos o script "dev" e, como reserva, "watch": são as convenções do
-// Laravel com Vite e do Laravel Mix antigo. Nada é assumido às cegas — se o
-// projeto não declara nenhum dos dois, não inventamos um processo.
-func scriptDeFrontend(dirProjeto string) (string, bool) {
-	dados, err := os.ReadFile(filepath.Join(dirProjeto, "package.json"))
-	if err != nil {
-		return "", false
-	}
-
-	var pkg struct {
-		Scripts map[string]string `json:"scripts"`
-	}
-	if err := json.Unmarshal(dados, &pkg); err != nil {
-		return "", false
-	}
-
-	gerenciador := gerenciadorDeNode(dirProjeto)
-	for _, nome := range []string{"dev", "watch"} {
-		if _, ok := pkg.Scripts[nome]; ok {
-			return gerenciador + " run " + nome, true
-		}
-	}
-	return "", false
-}
-
-func gerenciadorDeNode(dirProjeto string) string {
-	locks := map[string]string{
-		"bun.lockb":         "bun",
-		"bun.lock":          "bun",
-		"pnpm-lock.yaml":    "pnpm",
-		"yarn.lock":         "yarn",
-		"package-lock.json": "npm",
-	}
-	for lock, gerenciador := range locks {
-		if _, err := os.Stat(filepath.Join(dirProjeto, lock)); err == nil {
-			return gerenciador
-		}
-	}
-	return "npm"
-}
-
-func filtrar(procs []supervisor.Processo, lista string) ([]supervisor.Processo, error) {
-	querido := map[string]bool{}
-	for _, nome := range strings.Split(lista, ",") {
-		querido[strings.TrimSpace(nome)] = true
-	}
-
-	var saida []supervisor.Processo
-	for _, p := range procs {
-		if querido[p.Nome] {
-			saida = append(saida, p)
-			delete(querido, p.Nome)
-		}
-	}
-
-	if len(querido) > 0 {
-		faltando := make([]string, 0, len(querido))
-		for nome := range querido {
-			faltando = append(faltando, nome)
-		}
-		slices.Sort(faltando)
-		return nil, fmt.Errorf("processo(s) não configurado(s): %s", strings.Join(faltando, ", "))
-	}
-	return saida, nil
-}
-
-func temServidor(procs []supervisor.Processo) bool {
-	for _, p := range procs {
-		if strings.Contains(p.Linha, "artisan serve") {
-			return true
-		}
-	}
-	return false
-}
-
-// portaLivre pede ao sistema uma porta disponível.
-//
-// Pedir a porta 0 faz o kernel escolher uma livre; lemos qual foi e liberamos.
-// Há uma janela de corrida entre fechar e o processo real abrir, mas é a
-// técnica padrão e o risco em desenvolvimento é desprezível — bem menor que
-// o de fixar 8000 e colidir toda vez que dois projetos subirem juntos.
-func portaLivre() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, fmt.Errorf("procurando uma porta livre: %w", err)
-	}
-	defer l.Close()
-
-	return l.Addr().(*net.TCPAddr).Port, nil
-}
-
 // sairComCodigo encerra com um código específico, sem imprimir mensagem.
+//
+// Usado quando o comando já explicou o que houve na própria saída — o caso do
+// start, em que os logs do processo que caiu já foram para o terminal. Um
+// "devm: ..." por cima seria ruído duplicado.
 type sairComCodigo struct{ codigo int }
 
 func (e *sairComCodigo) Error() string { return fmt.Sprintf("saída com código %d", e.codigo) }
 func (e *sairComCodigo) Code() int     { return e.codigo }
+
+// startDestacadoCmd sobe o ambiente no daemon e devolve o terminal.
+//
+// A diferença entre isto e o start em primeiro plano é só ONDE os processos
+// vivem: aqui eles pertencem ao daemon, que sobrevive ao fechamento do
+// terminal. O preparo — PHP, serviços, escolha de processos — é idêntico,
+// porque os dois caminhos usam o mesmo pacote environment.
+func startDestacadoCmd(stdio IO, porta int, apenas string, semNode bool) error {
+	w := stdio.Out
+
+	p, err := localizarProjeto()
+	if err != nil {
+		return err
+	}
+
+	nome, err := registrarSeNecessario(w, p)
+	if err != nil {
+		return err
+	}
+
+	c, err := garantirDaemon(w)
+	if err != nil {
+		return err
+	}
+
+	pedido := daemon.PedidoStart{Porta: porta, SemNode: semNode}
+	if apenas != "" {
+		pedido.Apenas = strings.Split(apenas, ",")
+	}
+
+	amb, err := c.Start(context.Background(), nome, pedido)
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(w, "\n%s rodando em segundo plano\n", amb.Projeto)
+	fmt.Fprintf(w, "  PHP        %s\n", amb.PHP)
+	for _, proc := range amb.Processos {
+		fmt.Fprintf(w, "  %-10s %s\n", proc.Nome, proc.Linha)
+	}
+	if amb.Porta != 0 {
+		fmt.Fprintf(w, "\n  http://127.0.0.1:%d\n", amb.Porta)
+	}
+	fmt.Fprintf(w, "\n  devm logs %s -f   acompanha os logs\n", amb.Projeto)
+	fmt.Fprintf(w, "  devm stop %s      derruba\n", amb.Projeto)
+	return nil
+}

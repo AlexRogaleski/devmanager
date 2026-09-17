@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/AlexRogaleski/devmanager/internal/environment"
 	"github.com/AlexRogaleski/devmanager/internal/paths"
 	"github.com/AlexRogaleski/devmanager/internal/project"
 	"github.com/AlexRogaleski/devmanager/internal/runner"
 	"github.com/AlexRogaleski/devmanager/internal/runtimes"
-	"github.com/AlexRogaleski/devmanager/internal/semver"
 )
 
 // runCmd executa um comando arbitrário com o PHP do projeto no PATH.
@@ -128,19 +128,6 @@ func runnerDoDiretorioAtual() (*runner.Runner, error) {
 }
 
 // resolverRuntime escolhe o PHP do projeto.
-//
-// Sem require.php declarado, cai para a versão mais nova disponível: é a
-// escolha menos surpreendente, e o projeto pode fixar a versão depois no
-// arquivo de configuração.
-func resolverRuntime(p *project.Project) (rt runtimes.Runtime, err error) {
-	exigencia, origem := p.PHPRequirement()
-
-	c := semver.Any
-	if exigencia != "" {
-		c, err = semver.ParseConstraint(exigencia)
-		if err != nil {
-			return rt, fmt.Errorf("versão de PHP inválida em %s: %w", origem, err)
-		}
-	}
-	return defaultManager().Resolve(context.Background(), "php", c)
+func resolverRuntime(p *project.Project) (runtimes.Runtime, error) {
+	return environment.ResolverPHP(context.Background(), p)
 }

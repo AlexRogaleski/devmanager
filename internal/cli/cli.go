@@ -59,6 +59,14 @@ func Run(args []string, stdio IO) error {
 		return upCmd(stdio, resto)
 	case "start":
 		return startCmd(stdio, resto)
+	case "ps":
+		return psCmd(stdio.Out, resto)
+	case "stop":
+		return stopCmd(stdio.Out, resto)
+	case "logs":
+		return logsCmd(stdio.Out, resto)
+	case "daemon":
+		return daemonCmd(stdio, resto)
 	case "run":
 		return runCmd(stdio, resto)
 	case "artisan":
@@ -96,7 +104,10 @@ Projetos:
   prune      limpa entradas de projetos que não existem mais
   detect     inspeciona uma pasta e descreve o projeto encontrado
   up         prepara o projeto para rodar (dependências, .env, chave)
-  start      sobe os processos do projeto (servidor, filas, frontend)
+  start      sobe os processos do projeto (-d para segundo plano)
+  ps         mostra os ambientes rodando em segundo plano
+  stop       derruba um ambiente (--all para todos)
+  logs       mostra os logs de um ambiente (-f para acompanhar)
 
 Execução (usa o PHP exigido pelo projeto da pasta atual):
   artisan    roda php artisan
@@ -120,6 +131,13 @@ Runtimes:
   php use    fixa a versão de PHP do projeto no devmanager.yaml
   php avail  lista versões que podem ser instaladas
   php install  baixa uma versão de PHP isolada do sistema
+
+Daemon:
+  daemon status    mostra se o daemon está rodando
+  daemon start     inicia o daemon
+  daemon stop      encerra o daemon e todos os ambientes
+  daemon logs      mostra o log do próprio daemon
+  daemon install   grava o unit do systemd para subir no login
 
 Outros:
   version    mostra a versão do Dev Manager

@@ -9,6 +9,7 @@ import (
 	"io"
 	"slices"
 
+	"github.com/AlexRogaleski/devmanager/internal/environment"
 	"github.com/AlexRogaleski/devmanager/internal/services"
 )
 
@@ -294,7 +295,7 @@ func enriquecerErroDePorta(err error, spec services.Spec) error {
 		return err
 	}
 
-	livre, errPorta := portaLivre()
+	livre, errPorta := environment.PortaLivre()
 	if errPorta != nil {
 		return err
 	}

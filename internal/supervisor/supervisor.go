@@ -49,8 +49,30 @@ type Supervisor struct {
 	Saida io.Writer
 	Cores bool
 
+	// SaidaDe, quando definido, dá a cada processo seu próprio destino em vez
+	// do escritor com prefixo compartilhado.
+	//
+	// É o que o daemon precisa: ele não escreve num terminal, e quer as
+	// linhas separadas por processo para guardar no anel de logs e servir
+	// pela API. Num terminal, prefixar é a apresentação certa; numa API,
+	// prefixar seria jogar fora a estrutura para o cliente ter que parseá-la
+	// de volta.
+	SaidaDe func(processo string) io.Writer
+
 	// Encerramento é o prazo entre o pedido de parada e a força bruta.
 	Encerramento time.Duration
+}
+
+// saida resolve o destino das mensagens do supervisor.
+//
+// O daemon não tem terminal: ele deixa Saida em nil e recebe as linhas dos
+// processos por SaidaDe. Devolver io.Discard aqui evita ter que guardar cada
+// Fprintf com um if — e escrever num io.Writer nil entraria em pânico.
+func (s *Supervisor) saida() io.Writer {
+	if s.Saida == nil {
+		return io.Discard
+	}
+	return s.Saida
 }
 
 // resultado é o que uma goroutine de espera reporta quando um processo termina.
@@ -115,10 +137,16 @@ func (s *Supervisor) Run(ctx context.Context) error {
 			return fmt.Errorf("processo %q: %w", p.Nome, err)
 		}
 
-		saidaProc := novoEscritor(s.Saida, &mu, p.Nome, largura, i, s.Cores)
-		escritores = append(escritores, saidaProc)
+		var destino io.Writer
+		if s.SaidaDe != nil {
+			destino = s.SaidaDe(p.Nome)
+		} else {
+			esc := novoEscritor(s.saida(), &mu, p.Nome, largura, i, s.Cores)
+			escritores = append(escritores, esc)
+			destino = esc
+		}
 
-		cmd, limpar, err := s.montar(ctx, args, saidaProc, prazo)
+		cmd, limpar, err := s.montar(ctx, args, destino, prazo)
 		if err != nil {
 			desligar()
 			esperarTodos(resultados, len(iniciados), prazo)
@@ -133,7 +161,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 		iniciados = append(iniciados, cmd)
 
-		fmt.Fprintf(s.Saida, "iniciado  %-*s  %s\n", largura, p.Nome, p.Linha)
+		fmt.Fprintf(s.saida(), "iniciado  %-*s  %s\n", largura, p.Nome, p.Linha)
 
 		// Uma goroutine por processo, cuja única tarefa é esperar e reportar.
 		// Wait() bloqueia, então ele precisa de uma linha de execução própria;
@@ -144,7 +172,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}(cmd)
 	}
 
-	fmt.Fprintf(s.Saida, "\n%d processos rodando — Ctrl+C para encerrar\n\n", len(iniciados))
+	fmt.Fprintf(s.saida(), "\n%d processos rodando — Ctrl+C para encerrar\n\n", len(iniciados))
 
 	sinais := make(chan os.Signal, 1)
 	signal.Notify(sinais, os.Interrupt, syscall.SIGTERM)
@@ -157,13 +185,13 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	select {
 	case r := <-resultados:
 		motivo = descreverSaida(r)
-		fmt.Fprintf(s.Saida, "\n%s\n", motivo)
+		fmt.Fprintf(s.saida(), "\n%s\n", motivo)
 
 	case sig := <-sinais:
-		fmt.Fprintf(s.Saida, "\nrecebido %s, encerrando...\n", sig)
+		fmt.Fprintf(s.saida(), "\nrecebido %s, encerrando...\n", sig)
 
 	case <-ctx.Done():
-		fmt.Fprintln(s.Saida, "\nencerrando...")
+		fmt.Fprintln(s.saida(), "\nencerrando...")
 	}
 
 	desligar()
@@ -173,7 +201,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	}
 	esperarTodos(resultados, restantes, prazo+time.Second)
 
-	fmt.Fprintln(s.Saida, "todos os processos encerrados")
+	fmt.Fprintln(s.saida(), "todos os processos encerrados")
 
 	if motivo != "" {
 		return &ProcessoTerminouError{Descricao: motivo}
