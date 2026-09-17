@@ -46,19 +46,52 @@ type Runner struct {
 // O código de saída do filho é propagado num ExitError, para que
 // `devm artisan migrate && deploy` se comporte como `php artisan migrate && deploy`.
 func (r *Runner) Run(ctx context.Context, nome string, args ...string) error {
+	cmd, limpar, err := r.Comando(ctx, nome, args...)
+	if err != nil {
+		return err
+	}
+	defer limpar()
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("iniciando %s: %w", nome, err)
+	}
+
+	pararSinais := encaminharSinais(cmd)
+	defer pararSinais()
+
+	if err := cmd.Wait(); err != nil {
+		// exec.ExitError significa "o processo rodou e saiu com código != 0".
+		// Isso NÃO é falha nossa: `artisan migrate` pode legitimamente sair
+		// com 1. Convertemos para ExitError nosso, sem mensagem de erro extra,
+		// e a CLI só repassa o código.
+		var saida *exec.ExitError
+		if errors.As(err, &saida) {
+			return &ExitError{Code: saida.ExitCode()}
+		}
+		return fmt.Errorf("executando %s: %w", nome, err)
+	}
+	return nil
+}
+
+// Comando monta um *exec.Cmd já configurado com o ambiente do projeto, sem
+// executá-lo. Devolve também a função de limpeza do shim temporário.
+//
+// Separar a MONTAGEM da EXECUÇÃO é o que permite o supervisor existir: ele
+// precisa iniciar vários processos, conectar a saída de cada um a um writer
+// com prefixo e esperar por todos ao mesmo tempo — coisas impossíveis com uma
+// função que bloqueia até o processo terminar.
+func (r *Runner) Comando(ctx context.Context, nome string, args ...string) (*exec.Cmd, func(), error) {
 	// O shim coloca o PHP escolhido na frente do PATH, para toda a árvore de
 	// processos. Ver EnsureShim em shim.go para o porquê.
 	shim, limpar, err := r.prepararShim()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	// defer roda quando a função retorna, por qualquer caminho: retorno normal,
-	// erro no meio, ou panic. Aqui ele só tem efeito no shim temporário.
-	defer limpar()
 
 	caminho, err := resolverExecutavel(nome, shim)
 	if err != nil {
-		return err
+		limpar()
+		return nil, nil, err
 	}
 
 	// Se o alvo é um script PHP, invocamos o NOSSO interpretador passando o
@@ -85,25 +118,7 @@ func (r *Runner) Run(ctx context.Context, nome string, args ...string) error {
 	cmd.Stdout = r.Stdout
 	cmd.Stderr = r.Stderr
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("iniciando %s: %w", nome, err)
-	}
-
-	pararSinais := encaminharSinais(cmd)
-	defer pararSinais()
-
-	if err := cmd.Wait(); err != nil {
-		// exec.ExitError significa "o processo rodou e saiu com código != 0".
-		// Isso NÃO é falha nossa: `artisan migrate` pode legitimamente sair
-		// com 1. Convertemos para ExitError nosso, sem mensagem de erro extra,
-		// e a CLI só repassa o código.
-		var saida *exec.ExitError
-		if errors.As(err, &saida) {
-			return &ExitError{Code: saida.ExitCode()}
-		}
-		return fmt.Errorf("executando %s: %w", nome, err)
-	}
-	return nil
+	return cmd, limpar, nil
 }
 
 // RunPHP executa o próprio interpretador, sem procurar nada no PATH.

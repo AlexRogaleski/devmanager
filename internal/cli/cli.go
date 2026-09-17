@@ -57,6 +57,8 @@ func Run(args []string, stdio IO) error {
 
 	case "up":
 		return upCmd(stdio, resto)
+	case "start":
+		return startCmd(stdio, resto)
 	case "run":
 		return runCmd(stdio, resto)
 	case "artisan":
@@ -91,6 +93,7 @@ Projetos:
   prune      limpa entradas de projetos que não existem mais
   detect     inspeciona uma pasta e descreve o projeto encontrado
   up         prepara o projeto para rodar (dependências, .env, chave)
+  start      sobe os processos do projeto (servidor, filas, frontend)
 
 Execução (usa o PHP exigido pelo projeto da pasta atual):
   artisan    roda php artisan

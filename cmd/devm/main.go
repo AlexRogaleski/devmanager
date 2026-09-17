@@ -27,6 +27,13 @@ func main() {
 		os.Exit(saida.Code)
 	}
 
+	// Alguns comandos já explicaram o que houve na própria saída; só precisam
+	// do código de retorno. Uma mensagem "devm: ..." aqui seria ruído.
+	var comCodigo interface{ Code() int }
+	if errors.As(err, &comCodigo) {
+		os.Exit(comCodigo.Code())
+	}
+
 	fmt.Fprintln(os.Stderr, "devm:", err)
 	os.Exit(1)
 }
