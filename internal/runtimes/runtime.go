@@ -171,3 +171,20 @@ func formatarVersoes(vs []semver.Version) string {
 	}
 	return joinStrings(textos, ", ")
 }
+
+// Escolher seleciona o melhor runtime de uma lista JÁ obtida.
+//
+// Resolve faz List a cada chamada, o que significa executar todos os binários
+// de PHP da máquina. Para um comando que resolve N projetos — como o
+// `devm list` — isso seria N vezes o mesmo trabalho. Com esta função a lista
+// é obtida uma vez e reaproveitada.
+//
+// A lista precisa vir ordenada do maior para o menor, como Manager.List devolve.
+func Escolher(disponiveis []Runtime, c semver.Constraint) (Runtime, bool) {
+	for _, r := range disponiveis {
+		if c.Allows(r.Version) {
+			return r, true
+		}
+	}
+	return Runtime{}, false
+}

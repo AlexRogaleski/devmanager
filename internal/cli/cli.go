@@ -44,6 +44,17 @@ func Run(args []string, stdio IO) error {
 	// Estes três repassam os argumentos VERBATIM para o processo filho.
 	// Nenhuma flag é interpretada pelo devm, senão `devm artisan migrate
 	// --force` roubaria o --force do artisan.
+	case "add":
+		return addCmd(stdio.Out, resto)
+	case "list", "ls":
+		return listCmd(stdio.Out, resto)
+	case "remove", "rm":
+		return removeCmd(stdio.Out, resto)
+	case "scan":
+		return scanCmd(stdio.Out, resto)
+	case "prune":
+		return pruneCmd(stdio.Out, resto)
+
 	case "up":
 		return upCmd(stdio, resto)
 	case "run":
@@ -72,7 +83,12 @@ func printUsage(w io.Writer) {
 Uso:
   devm <comando> [argumentos]
 
-Projeto:
+Projetos:
+  list       lista os projetos registrados e o estado de cada um
+  add        registra um projeto
+  scan       registra todos os projetos de um diretório
+  remove     tira um projeto do registro
+  prune      limpa entradas de projetos que não existem mais
   detect     inspeciona uma pasta e descreve o projeto encontrado
   up         prepara o projeto para rodar (dependências, .env, chave)
 
