@@ -22,7 +22,7 @@ func defaultManager() *runtimes.Manager {
 // phpCmd despacha os subcomandos de `devm php`.
 func phpCmd(w io.Writer, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprint(w, "uso: devm php <list|which> [argumentos]\n")
+		fmt.Fprint(w, "uso: devm php <list|which|use> [argumentos]\n")
 		return nil
 	}
 
@@ -31,6 +31,8 @@ func phpCmd(w io.Writer, args []string) error {
 		return phpListCmd(w, args[1:])
 	case "which":
 		return phpWhichCmd(w, args[1:])
+	case "use":
+		return phpUseCmd(w, args[1:])
 	default:
 		return fmt.Errorf("subcomando desconhecido: php %q", args[0])
 	}

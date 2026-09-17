@@ -97,6 +97,21 @@ func ambienteDoProjeto() (*project.Project, *runner.Runner, error) {
 	}, nil
 }
 
+// localizarProjeto acha o projeto SEM resolver o runtime.
+//
+// Existe por causa de um bug concreto: `devm php use --clear` é a saída de
+// emergência de uma versão fixada que não existe na máquina. Se ele dependesse
+// de resolver o runtime primeiro, falharia justamente na situação em que é
+// necessário. Uma saída de emergência não pode depender daquilo de que ela
+// serve para escapar.
+func localizarProjeto() (*project.Project, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("lendo o diretório atual: %w", err)
+	}
+	return project.Find(cwd)
+}
+
 func runnerDoDiretorioAtual() (*runner.Runner, error) {
 	_, r, err := ambienteDoProjeto()
 	return r, err
@@ -108,11 +123,13 @@ func runnerDoDiretorioAtual() (*runner.Runner, error) {
 // escolha menos surpreendente, e o projeto pode fixar a versão depois no
 // arquivo de configuração.
 func resolverRuntime(p *project.Project) (rt runtimes.Runtime, err error) {
+	exigencia, origem := p.PHPRequirement()
+
 	c := semver.Any
-	if p.PHPConstraint != "" {
-		c, err = semver.ParseConstraint(p.PHPConstraint)
+	if exigencia != "" {
+		c, err = semver.ParseConstraint(exigencia)
 		if err != nil {
-			return rt, fmt.Errorf("constraint de PHP inválida em composer.json: %w", err)
+			return rt, fmt.Errorf("versão de PHP inválida em %s: %w", origem, err)
 		}
 	}
 	return defaultManager().Resolve(context.Background(), "php", c)

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/AlexRogaleski/devmanager/internal/config"
 )
 
 // composerJSON espelha só os campos do composer.json que nos interessam.
@@ -69,6 +71,14 @@ func Detect(dir string) (*Project, error) {
 	if err := readComposerLock(p, abs); err != nil {
 		return nil, err
 	}
+
+	// O devmanager.yaml é lido por último porque é ele quem tem a palavra
+	// final: o que estiver aqui sobrepõe tudo que foi detectado acima.
+	cfg, err := config.Load(abs)
+	if err != nil {
+		return nil, err
+	}
+	p.Config = cfg
 
 	return p, nil
 }

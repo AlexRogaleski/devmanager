@@ -6,7 +6,11 @@
 // entrarem projetos Node ou Symfony, nada fora deste pacote muda.
 package project
 
-import "path/filepath"
+import (
+	"path/filepath"
+
+	"github.com/AlexRogaleski/devmanager/internal/config"
+)
 
 // Kind identifica o tipo de projeto detectado.
 //
@@ -50,6 +54,44 @@ type Project struct {
 	HasArtisan bool `json:"has_artisan"`
 	HasVendor  bool `json:"has_vendor"`
 	HasEnv     bool `json:"has_env"`
+
+	// Config é o devmanager.yaml do projeto, ou nil se ele não existe.
+	Config *config.Config `json:"config,omitempty"`
+}
+
+// Origem identifica quem decidiu a versão de PHP do projeto.
+//
+// Expor a origem — e não só o resultado — é o que torna a decisão auditável.
+// "por que este projeto está rodando 8.5?" precisa ter resposta visível, senão
+// a ferramenta vira caixa-preta.
+type Origem string
+
+const (
+	OrigemNenhuma  Origem = ""
+	OrigemComposer Origem = "composer.json"
+	OrigemConfig   Origem = "devmanager.yaml"
+)
+
+// PHPRequirement devolve a exigência de PHP efetiva e de onde ela veio.
+//
+// A precedência é deliberada: escolha explícita do desenvolvedor vence
+// detecção automática, sempre. Um projeto pode declarar "^8.2" no composer e
+// estar em produção no 8.3 — sem poder fixar, o ambiente local rodaria numa
+// versão diferente da que importa.
+func (p *Project) PHPRequirement() (string, Origem) {
+	if p.Config != nil && p.Config.PHP != "" {
+		return p.Config.PHP, OrigemConfig
+	}
+	if p.PHPConstraint != "" {
+		return p.PHPConstraint, OrigemComposer
+	}
+	return "", OrigemNenhuma
+}
+
+// PHPPinned informa se a versão foi fixada à mão no devmanager.yaml.
+func (p *Project) PHPPinned() bool {
+	_, origem := p.PHPRequirement()
+	return origem == OrigemConfig
 }
 
 // IsLaravel informa se o projeto é Laravel.

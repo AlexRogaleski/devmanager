@@ -174,3 +174,104 @@ func TestDetectErros(t *testing.T) {
 		}
 	})
 }
+
+// A precedência entre devmanager.yaml e composer.json é regra de negócio:
+// escolha explícita do desenvolvedor vence detecção automática, sempre.
+func TestPHPRequirementPrecedencia(t *testing.T) {
+	casos := []struct {
+		nome     string
+		arquivos map[string]string
+		querReq  string
+		querOrig Origem
+	}{
+		{
+			nome: "só composer.json",
+			arquivos: map[string]string{
+				"composer.json": `{"require":{"php":"^8.2"}}`,
+			},
+			querReq:  "^8.2",
+			querOrig: OrigemComposer,
+		},
+		{
+			nome: "devmanager.yaml sobrepõe o composer",
+			arquivos: map[string]string{
+				"composer.json":   `{"require":{"php":"^8.2"}}`,
+				"devmanager.yaml": "php: \"8.3\"\n",
+			},
+			querReq:  "8.3",
+			querOrig: OrigemConfig,
+		},
+		{
+			nome: "devmanager.yaml sem php cai para o composer",
+			arquivos: map[string]string{
+				"composer.json":   `{"require":{"php":"^8.2"}}`,
+				"devmanager.yaml": "services:\n  - redis\n",
+			},
+			querReq:  "^8.2",
+			querOrig: OrigemComposer,
+		},
+		{
+			nome: "nenhuma exigência",
+			arquivos: map[string]string{
+				"composer.json": `{"require":{"monolog/monolog":"^3.0"}}`,
+			},
+			querOrig: OrigemNenhuma,
+		},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			p, err := Detect(projetoFalso(t, c.arquivos))
+			if err != nil {
+				t.Fatalf("Detect falhou: %v", err)
+			}
+
+			req, origem := p.PHPRequirement()
+			if req != c.querReq {
+				t.Errorf("exigência = %q, esperava %q", req, c.querReq)
+			}
+			if origem != c.querOrig {
+				t.Errorf("origem = %q, esperava %q", origem, c.querOrig)
+			}
+			if got := p.PHPPinned(); got != (c.querOrig == OrigemConfig) {
+				t.Errorf("PHPPinned() = %v", got)
+			}
+		})
+	}
+}
+
+// Find tem que reconhecer devmanager.yaml como raiz e funcionar de subpastas.
+func TestFindSobeNaArvore(t *testing.T) {
+	raiz := projetoFalso(t, map[string]string{
+		"composer.json":          `{"require":{"php":"^8.3"}}`,
+		"devmanager.yaml":        "php: \"8.4\"\n",
+		"app/Models/Usuario.php": "<?php",
+	})
+
+	p, err := Find(filepath.Join(raiz, "app", "Models"))
+	if err != nil {
+		t.Fatalf("Find falhou: %v", err)
+	}
+	if p.Path != raiz {
+		t.Errorf("Path = %q, esperava a raiz %q", p.Path, raiz)
+	}
+
+	req, origem := p.PHPRequirement()
+	if req != "8.4" || origem != OrigemConfig {
+		t.Errorf("exigência = %q de %q, esperava 8.4 de devmanager.yaml", req, origem)
+	}
+}
+
+func TestFindForaDeProjeto(t *testing.T) {
+	dir := t.TempDir()
+
+	_, err := Find(dir)
+	if err == nil {
+		t.Fatal("esperava erro fora de um projeto")
+	}
+
+	var np *NoProjectError
+	if !errors.As(err, &np) {
+		t.Errorf("erro = %T, esperava *NoProjectError", err)
+	}
+}

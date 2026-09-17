@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/AlexRogaleski/devmanager/internal/config"
 	"github.com/AlexRogaleski/devmanager/internal/project"
 	"github.com/AlexRogaleski/devmanager/internal/runtimes"
 	"github.com/AlexRogaleski/devmanager/internal/semver"
@@ -70,26 +71,35 @@ func detectCmd(w io.Writer, args []string) error {
 // O retorno é (runtime, erro) empacotado num struct porque a CLI quer mostrar
 // as duas coisas: ou o PHP escolhido, ou o motivo de não haver um.
 func resolverPHP(p *project.Project) resultadoPHP {
-	if p.PHPConstraint == "" {
-		return resultadoPHP{}
+	exigencia, origem := p.PHPRequirement()
+
+	res := resultadoPHP{Exigencia: exigencia, Origem: origem}
+	if exigencia == "" {
+		return res
 	}
 
-	c, err := semver.ParseConstraint(p.PHPConstraint)
+	c, err := semver.ParseConstraint(exigencia)
 	if err != nil {
-		return resultadoPHP{Erro: err}
+		res.Erro = err
+		return res
 	}
 
 	r, err := defaultManager().Resolve(context.Background(), "php", c)
 	if err != nil {
-		return resultadoPHP{Erro: err}
+		res.Erro = err
+		return res
 	}
-	return resultadoPHP{Runtime: r, Achou: true}
+
+	res.Runtime, res.Achou = r, true
+	return res
 }
 
 type resultadoPHP struct {
-	Runtime runtimes.Runtime
-	Achou   bool
-	Erro    error
+	Exigencia string
+	Origem    project.Origem
+	Runtime   runtimes.Runtime
+	Achou     bool
+	Erro      error
 }
 
 // printProject escreve o relatório legível por humanos.
@@ -97,15 +107,23 @@ func printProject(w io.Writer, p *project.Project, php resultadoPHP) {
 	fmt.Fprintf(w, "%s  (%s)\n", p.Name, p.Kind)
 	fmt.Fprintf(w, "  %-10s %s\n", "Caminho", p.Path)
 
-	if p.PHPConstraint != "" {
-		linha := p.PHPConstraint
+	if php.Exigencia != "" {
+		linha := php.Exigencia
 		switch {
 		case php.Achou:
-			linha = fmt.Sprintf("%s  →  %s  (%s)", p.PHPConstraint, php.Runtime.Version, php.Runtime.Bin)
+			linha = fmt.Sprintf("%s  →  %s  (%s)", php.Exigencia, php.Runtime.Version, php.Runtime.Bin)
 		case php.Erro != nil:
-			linha = fmt.Sprintf("%s  →  %s", p.PHPConstraint, php.Erro)
+			linha = fmt.Sprintf("%s  →  %s", php.Exigencia, php.Erro)
 		}
 		fmt.Fprintf(w, "  %-10s %s\n", "PHP", linha)
+
+		// Mostrar a origem torna a decisão auditável: sem isso, não dá para
+		// saber por que dois projetos parecidos escolheram versões diferentes.
+		nota := "exigido pelo composer.json"
+		if php.Origem == project.OrigemConfig {
+			nota = "fixado em " + config.FileName
+		}
+		fmt.Fprintf(w, "  %-10s %s\n", "", nota)
 	}
 
 	if p.LaravelRequire != "" || p.LaravelLocked != "" {

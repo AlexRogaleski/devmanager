@@ -84,6 +84,7 @@ Editor:
 Runtimes:
   php list   lista as versões de PHP disponíveis
   php which  mostra qual PHP satisfaz uma constraint
+  php use    fixa a versão de PHP do projeto no devmanager.yaml
 
 Outros:
   version    mostra a versão do Dev Manager

@@ -8,7 +8,7 @@ import (
 
 // marcadores são os arquivos que identificam a raiz de um projeto.
 // A ordem não importa: basta um deles existir.
-var marcadores = []string{"composer.json", "artisan"}
+var marcadores = []string{"devmanager.yaml", "composer.json", "artisan"}
 
 // Find sobe na árvore de diretórios até encontrar a raiz de um projeto.
 //
