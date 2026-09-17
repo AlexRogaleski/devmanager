@@ -143,13 +143,14 @@ func printProject(w io.Writer, p *project.Project, php resultadoPHP) {
 		return
 	}
 
-	if p.Ready() {
+	pendencias := resumoPendencias(p)
+	if len(pendencias) == 0 {
 		fmt.Fprintf(w, "  %-10s pronto para rodar\n", "Estado")
 		return
 	}
 
-	fmt.Fprintf(w, "  %-10s falta preparar\n", "Estado")
-	for _, passo := range p.Missing() {
+	fmt.Fprintf(w, "  %-10s falta preparar (rode `devm up`)\n", "Estado")
+	for _, passo := range pendencias {
 		fmt.Fprintf(w, "  %-10s → %s\n", "", passo)
 	}
 }

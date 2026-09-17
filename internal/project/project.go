@@ -113,27 +113,6 @@ func (p *Project) Ready() bool {
 	return p.HasVendor && p.HasEnv
 }
 
-// Missing lista o que falta para o projeto rodar, em ordem de execução.
-//
-// Devolver uma lista em vez de um booleano permite que a CLI hoje apenas
-// imprima os passos, e que amanhã o comando `devm up` os execute.
-func (p *Project) Missing() []string {
-	// var sem valor inicial cria um slice nil. Em Go isso é seguro: append
-	// funciona em slice nil, e len() devolve 0. Não precisa inicializar.
-	var falta []string
-
-	if !p.HasVendor {
-		falta = append(falta, "composer install")
-	}
-	if !p.HasEnv {
-		falta = append(falta, "cp .env.example .env")
-	}
-	if p.IsLaravel() && !p.HasEnv {
-		falta = append(falta, "php artisan key:generate")
-	}
-	return falta
-}
-
 // ArtisanPath devolve o caminho absoluto do artisan deste projeto.
 func (p *Project) ArtisanPath() string {
 	return filepath.Join(p.Path, "artisan")

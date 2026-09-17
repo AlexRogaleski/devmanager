@@ -44,6 +44,8 @@ func Run(args []string, stdio IO) error {
 	// Estes três repassam os argumentos VERBATIM para o processo filho.
 	// Nenhuma flag é interpretada pelo devm, senão `devm artisan migrate
 	// --force` roubaria o --force do artisan.
+	case "up":
+		return upCmd(stdio, resto)
 	case "run":
 		return runCmd(stdio, resto)
 	case "artisan":
@@ -72,6 +74,7 @@ Uso:
 
 Projeto:
   detect     inspeciona uma pasta e descreve o projeto encontrado
+  up         prepara o projeto para rodar (dependências, .env, chave)
 
 Execução (usa o PHP exigido pelo projeto da pasta atual):
   artisan    roda php artisan

@@ -32,14 +32,13 @@ func projetoFalso(t *testing.T, arquivos map[string]string) string {
 
 func TestDetect(t *testing.T) {
 	casos := []struct {
-		nome      string
-		arquivos  map[string]string
-		kind      Kind
-		php       string
-		require   string
-		locked    string
-		pronto    bool
-		qtdFaltas int
+		nome     string
+		arquivos map[string]string
+		kind     Kind
+		php      string
+		require  string
+		locked   string
+		pronto   bool
 	}{
 		{
 			nome: "laravel instalado e configurado",
@@ -62,20 +61,18 @@ func TestDetect(t *testing.T) {
 				"composer.json": `{"require":{"php":"^8.4","laravel/framework":"^13.0"}}`,
 				"artisan":       "#!/usr/bin/env php",
 			},
-			kind:      KindLaravel,
-			php:       "^8.4",
-			require:   "^13.0",
-			pronto:    false,
-			qtdFaltas: 3, // composer install, .env, key:generate
+			kind:    KindLaravel,
+			php:     "^8.4",
+			require: "^13.0",
+			pronto:  false,
 		},
 		{
 			nome: "php puro, sem laravel",
 			arquivos: map[string]string{
 				"composer.json": `{"require":{"php":"^8.1","symfony/console":"^7.0"}}`,
 			},
-			kind:      KindPHP,
-			php:       "^8.1",
-			qtdFaltas: 2,
+			kind: KindPHP,
+			php:  "^8.1",
 		},
 		{
 			nome: "artisan presente mas framework não declarado",
@@ -83,15 +80,13 @@ func TestDetect(t *testing.T) {
 				"composer.json": `{"require":{"php":"^8.2"}}`,
 				"artisan":       "#!/usr/bin/env php",
 			},
-			kind:      KindLaravel,
-			php:       "^8.2",
-			qtdFaltas: 3,
+			kind: KindLaravel,
+			php:  "^8.2",
 		},
 		{
-			nome:      "pasta comum",
-			arquivos:  map[string]string{"README.md": "oi"},
-			kind:      KindUnknown,
-			qtdFaltas: 2,
+			nome:     "pasta comum",
+			arquivos: map[string]string{"README.md": "oi"},
+			kind:     KindUnknown,
 		},
 	}
 
@@ -120,9 +115,6 @@ func TestDetect(t *testing.T) {
 			}
 			if p.Ready() != c.pronto {
 				t.Errorf("Ready() = %v, esperava %v", p.Ready(), c.pronto)
-			}
-			if got := len(p.Missing()); got != c.qtdFaltas {
-				t.Errorf("Missing() tem %d itens (%v), esperava %d", got, p.Missing(), c.qtdFaltas)
 			}
 			if p.Path != dir {
 				t.Errorf("Path = %q, esperava o caminho absoluto %q", p.Path, dir)

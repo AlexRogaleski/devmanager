@@ -57,3 +57,36 @@ func EnsureShim(shimDir string, rt runtimes.Runtime) (string, error) {
 func PHPPath(shimDir string) string {
 	return filepath.Join(shimDir, "php")
 }
+
+// EnsureComposerShim cria um wrapper "composer" dentro do shim.
+//
+// O wrapper é um script de shell que executa o phar com o PHP do projeto:
+//
+//	#!/bin/sh
+//	exec "<php do projeto>" "<composer.phar>" "$@"
+//
+// Com ele no PATH, qualquer coisa que chame "composer" — um script do
+// package.json, um comando do artisan, o próprio dev no terminal — usa o par
+// correto de PHP e composer, sem saber que existe um Dev Manager no meio.
+//
+// O exec substitui o processo do shell em vez de criar um filho, então sinais
+// e código de saída chegam direto ao composer, sem intermediário.
+func EnsureComposerShim(shimDir, phpBin, phar string) error {
+	if err := os.MkdirAll(shimDir, 0o755); err != nil {
+		return fmt.Errorf("criando shim em %s: %w", shimDir, err)
+	}
+
+	conteudo := fmt.Sprintf("#!/bin/sh\nexec %q %q \"$@\"\n", phpBin, phar)
+	destino := filepath.Join(shimDir, "composer")
+
+	// Se já está exatamente assim, não reescreve: evita mexer no mtime a cada
+	// comando, o que confundiria ferramentas que observam o diretório.
+	if atual, err := os.ReadFile(destino); err == nil && string(atual) == conteudo {
+		return nil
+	}
+
+	if err := os.WriteFile(destino, []byte(conteudo), 0o755); err != nil {
+		return fmt.Errorf("criando wrapper do composer: %w", err)
+	}
+	return nil
+}

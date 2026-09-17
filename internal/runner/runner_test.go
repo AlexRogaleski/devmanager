@@ -188,3 +188,104 @@ func TestShimTemporarioEhRemovido(t *testing.T) {
 }
 
 func io_Discard() *bytes.Buffer { return &bytes.Buffer{} }
+
+// Regressão: um script com shebang de caminho ABSOLUTO (#!/usr/bin/php)
+// atravessa o shim, porque o kernel obedece ao shebang e ignora o PATH.
+// É o caso do /usr/bin/composer do Ubuntu — e o efeito era o pior possível:
+// o composer resolvia dependências numa versão de PHP e o artisan rodava
+// em outra.
+func TestScriptComShebangAbsolutoUsaOPHPDoProjeto(t *testing.T) {
+	rt := phpFalso(t)
+	dir := t.TempDir()
+
+	// Simula o composer da distro: shebang com caminho ABSOLUTO para um
+	// binário chamado "php" que não existe aqui. Executado direto, falharia
+	// com ENOENT; só funciona se o runner desviar para o PHP do projeto.
+	script := filepath.Join(dir, "composer")
+	conteudo := "#!/caminho/inexistente/php\n<?php echo 'nunca chega aqui';\n"
+	if err := os.WriteFile(script, []byte(conteudo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var saida bytes.Buffer
+	r := &Runner{
+		Runtime: rt,
+		Stdout:  &saida,
+		Stderr:  &saida,
+		ShimDir: filepath.Join(t.TempDir(), "shim"),
+	}
+
+	if err := r.Run(context.Background(), script, "install"); err != nil {
+		t.Fatalf("Run falhou: %v", err)
+	}
+
+	// O php falso ecoa os argumentos: se ele recebeu o script, o desvio
+	// funcionou e o shebang foi ignorado.
+	if !strings.Contains(saida.String(), "php-falso") {
+		t.Errorf("não passou pelo PHP do projeto:\n%s", saida.String())
+	}
+	if !strings.Contains(saida.String(), "composer install") {
+		t.Errorf("argumentos errados:\n%s", saida.String())
+	}
+}
+
+func TestDeteccaoDeScriptPHP(t *testing.T) {
+	dir := t.TempDir()
+
+	casos := map[string]struct {
+		conteudo string
+		querPHP  bool
+	}{
+		"env php":        {"#!/usr/bin/env php\n<?php\n", true},
+		"caminho direto": {"#!/usr/bin/php\n<?php\n", true},
+		"versionado":     {"#!/usr/bin/php8.3\n<?php\n", true},
+		"shell":          {"#!/bin/sh\necho oi\n", false},
+		"python":         {"#!/usr/bin/env python3\nprint()\n", false},
+		"sem shebang":    {"binário qualquer", false},
+		"vazio":          {"", false},
+	}
+
+	for nome, c := range casos {
+		t.Run(nome, func(t *testing.T) {
+			caminho := filepath.Join(dir, strings.ReplaceAll(nome, " ", "-"))
+			if err := os.WriteFile(caminho, []byte(c.conteudo), 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			_, ok := ehScriptPHP(caminho)
+			if ok != c.querPHP {
+				t.Errorf("ehScriptPHP = %v, esperava %v", ok, c.querPHP)
+			}
+		})
+	}
+}
+
+func TestEnsureComposerShim(t *testing.T) {
+	shimDir := filepath.Join(t.TempDir(), "shim")
+
+	if err := EnsureComposerShim(shimDir, "/x/php", "/y/composer.phar"); err != nil {
+		t.Fatalf("EnsureComposerShim falhou: %v", err)
+	}
+
+	caminho := filepath.Join(shimDir, "composer")
+	dados, err := os.ReadFile(caminho)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(dados), "/x/php") || !strings.Contains(string(dados), "/y/composer.phar") {
+		t.Errorf("wrapper não referencia o par correto:\n%s", dados)
+	}
+	if !strings.HasPrefix(string(dados), "#!/bin/sh") {
+		t.Errorf("wrapper sem shebang:\n%s", dados)
+	}
+
+	info, _ := os.Stat(caminho)
+	if info.Mode()&0o111 == 0 {
+		t.Errorf("wrapper sem permissão de execução: %v", info.Mode())
+	}
+
+	// Idempotente: chamar de novo não deve falhar nem alterar o conteúdo.
+	if err := EnsureComposerShim(shimDir, "/x/php", "/y/composer.phar"); err != nil {
+		t.Fatalf("segunda chamada falhou: %v", err)
+	}
+}

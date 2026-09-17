@@ -63,7 +63,17 @@ func composerCmd(stdio IO, args []string) error {
 	}
 	r.Stdin, r.Stdout, r.Stderr = stdio.In, stdio.Out, stdio.Err
 
-	return r.Run(context.Background(), "composer", args...)
+	ctx := context.Background()
+
+	phar, err := garantirComposer(ctx, stdio.Out, r.ShimDir, r.Runtime.Bin)
+	if err != nil {
+		return err
+	}
+
+	// Executa o phar com o PHP do projeto, em vez de procurar "composer" no
+	// PATH. O composer da distro traz as próprias bibliotecas do sistema e
+	// exige extensões que um PHP estático enxuto não tem.
+	return r.RunPHP(ctx, append([]string{phar}, args...)...)
 }
 
 // ambienteDoProjeto é o caminho comum de todos os comandos de execução:

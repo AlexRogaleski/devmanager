@@ -56,9 +56,26 @@ func (r *Runner) Run(ctx context.Context, nome string, args ...string) error {
 	// erro no meio, ou panic. Aqui ele só tem efeito no shim temporário.
 	defer limpar()
 
-	caminho, err := resolverExecutavel(nome, shim, r.ambiente(shim))
+	caminho, err := resolverExecutavel(nome, shim)
 	if err != nil {
 		return err
+	}
+
+	// Se o alvo é um script PHP, invocamos o NOSSO interpretador passando o
+	// script como argumento, em vez de executá-lo direto.
+	//
+	// Isso corrige um furo real do shim: o /usr/bin/composer do Ubuntu tem
+	// shebang "#!/usr/bin/php" — caminho ABSOLUTO. O kernel obedece ao
+	// shebang e ignora o PATH, então o composer rodava no PHP do sistema
+	// mesmo com o shim na frente. O resultado era pior que não ter shim:
+	// o composer resolvia dependências para uma versão de PHP e o artisan
+	// rodava em outra.
+	//
+	// Só o "#!/usr/bin/env php" respeitaria o PATH — e não é o que a maioria
+	// dos pacotes de distro usa.
+	if scriptPHP, ok := ehScriptPHP(caminho); ok {
+		args = append([]string{scriptPHP}, args...)
+		caminho = r.Runtime.Bin
 	}
 
 	cmd := exec.CommandContext(ctx, caminho, args...)
@@ -149,7 +166,7 @@ func (r *Runner) prepararShim() (dir string, limpar func(), err error) {
 }
 
 // resolverExecutavel decide o que será executado de fato.
-func resolverExecutavel(nome, shim string, env []string) (string, error) {
+func resolverExecutavel(nome, shim string) (string, error) {
 	// Um nome com barra é um caminho, não algo a procurar no PATH.
 	if strings.ContainsRune(nome, os.PathSeparator) {
 		return nome, nil
@@ -167,6 +184,40 @@ func resolverExecutavel(nome, shim string, env []string) (string, error) {
 		return "", fmt.Errorf("comando não encontrado: %s", nome)
 	}
 	return caminho, nil
+}
+
+// ehScriptPHP informa se um arquivo é um script executado por um interpretador
+// PHP, devolvendo o caminho do script.
+//
+// A detecção é pelo shebang, não pela extensão: o composer não tem extensão
+// nenhuma, e ./vendor/bin/pest também não.
+func ehScriptPHP(caminho string) (string, bool) {
+	f, err := os.Open(caminho)
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+
+	// 128 bytes cobrem qualquer shebang real com folga.
+	buf := make([]byte, 128)
+	n, _ := f.Read(buf)
+	if n < 2 || buf[0] != '#' || buf[1] != '!' {
+		return "", false
+	}
+
+	linha := string(buf[2:n])
+	if i := strings.IndexAny(linha, "\r\n"); i >= 0 {
+		linha = linha[:i]
+	}
+
+	// Cobre "#!/usr/bin/php", "#!/usr/bin/php8.3" e "#!/usr/bin/env php".
+	for _, campo := range strings.Fields(linha) {
+		base := filepath.Base(campo)
+		if base == "php" || strings.HasPrefix(base, "php8") || strings.HasPrefix(base, "php7") {
+			return caminho, true
+		}
+	}
+	return "", false
 }
 
 // encaminharSinais repassa Ctrl+C e SIGTERM ao processo filho.
