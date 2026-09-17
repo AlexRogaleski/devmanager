@@ -29,6 +29,8 @@ func Run(args []string, stdout io.Writer) error {
 	comando, resto := args[0], args[1:]
 
 	switch comando {
+	case "detect":
+		return detectCmd(stdout, resto)
 	case "version":
 		return versionCmd(stdout, resto)
 	case "help", "-h", "--help":
@@ -48,6 +50,7 @@ Uso:
   devm <comando> [argumentos]
 
 Comandos:
+  detect     inspeciona uma pasta e descreve o projeto encontrado
   version    mostra a versão do Dev Manager
   help       mostra esta ajuda
 `)
