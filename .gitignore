@@ -1,0 +1,8 @@
+# binários compilados na raiz do projeto
+/devm
+/devmanagerd
+/bin/
+/dist/
+
+# saída de cobertura de testes
+*.out
