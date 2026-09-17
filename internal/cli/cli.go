@@ -66,6 +66,9 @@ func Run(args []string, stdio IO) error {
 	case "composer":
 		return composerCmd(stdio, resto)
 
+	case "service", "services":
+		return serviceCmd(stdio, resto)
+
 	case "ide":
 		return ideCmd(stdio.Out, resto)
 
@@ -99,6 +102,14 @@ Execução (usa o PHP exigido pelo projeto da pasta atual):
   artisan    roda php artisan
   composer   roda o composer
   run        roda qualquer comando com o PHP do projeto no PATH
+
+Serviços:
+  service catalog  lista os serviços que podem ser criados
+  service list     mostra os serviços nesta máquina
+  service start    sobe um serviço (ex.: devm service start postgres:17)
+  service stop     para um serviço, preservando os dados
+  service logs     mostra os logs de um serviço
+  service remove   remove o contêiner (--data apaga também os dados)
 
 Editor:
   ide        aponta as extensões do editor para o PHP do projeto
