@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 
 	"github.com/AlexRogaleski/devmanager/internal/project"
+	"github.com/AlexRogaleski/devmanager/internal/runtimes"
+	"github.com/AlexRogaleski/devmanager/internal/semver"
 )
 
 // detectCmd implementa `devm detect [--json] [caminho]`.
@@ -53,17 +56,56 @@ func detectCmd(w io.Writer, args []string) error {
 		return nil
 	}
 
-	printProject(w, p)
+	printProject(w, p, resolverPHP(p))
 	return nil
 }
 
+// resolverPHP responde "qual PHP roda este projeto?".
+//
+// Repare que quem faz isso é a CAMADA DE CLI, não o pacote project. O detector
+// continua sabendo só ler arquivos; casar a exigência com o que está instalado
+// é outra responsabilidade. Manter essa fronteira é o que permite testar o
+// detector sem PHP na máquina, e trocar a estratégia de runtime sem tocar nele.
+//
+// O retorno é (runtime, erro) empacotado num struct porque a CLI quer mostrar
+// as duas coisas: ou o PHP escolhido, ou o motivo de não haver um.
+func resolverPHP(p *project.Project) resultadoPHP {
+	if p.PHPConstraint == "" {
+		return resultadoPHP{}
+	}
+
+	c, err := semver.ParseConstraint(p.PHPConstraint)
+	if err != nil {
+		return resultadoPHP{Erro: err}
+	}
+
+	r, err := defaultManager().Resolve(context.Background(), "php", c)
+	if err != nil {
+		return resultadoPHP{Erro: err}
+	}
+	return resultadoPHP{Runtime: r, Achou: true}
+}
+
+type resultadoPHP struct {
+	Runtime runtimes.Runtime
+	Achou   bool
+	Erro    error
+}
+
 // printProject escreve o relatório legível por humanos.
-func printProject(w io.Writer, p *project.Project) {
+func printProject(w io.Writer, p *project.Project, php resultadoPHP) {
 	fmt.Fprintf(w, "%s  (%s)\n", p.Name, p.Kind)
 	fmt.Fprintf(w, "  %-10s %s\n", "Caminho", p.Path)
 
 	if p.PHPConstraint != "" {
-		fmt.Fprintf(w, "  %-10s %s\n", "PHP", p.PHPConstraint)
+		linha := p.PHPConstraint
+		switch {
+		case php.Achou:
+			linha = fmt.Sprintf("%s  →  %s  (%s)", p.PHPConstraint, php.Runtime.Version, php.Runtime.Bin)
+		case php.Erro != nil:
+			linha = fmt.Sprintf("%s  →  %s", p.PHPConstraint, php.Erro)
+		}
+		fmt.Fprintf(w, "  %-10s %s\n", "PHP", linha)
 	}
 
 	if p.LaravelRequire != "" || p.LaravelLocked != "" {

@@ -31,6 +31,8 @@ func Run(args []string, stdout io.Writer) error {
 	switch comando {
 	case "detect":
 		return detectCmd(stdout, resto)
+	case "php":
+		return phpCmd(stdout, resto)
 	case "version":
 		return versionCmd(stdout, resto)
 	case "help", "-h", "--help":
@@ -51,6 +53,7 @@ Uso:
 
 Comandos:
   detect     inspeciona uma pasta e descreve o projeto encontrado
+  php        lista e resolve versões de PHP disponíveis
   version    mostra a versão do Dev Manager
   help       mostra esta ajuda
 `)
