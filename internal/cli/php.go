@@ -16,13 +16,23 @@ import (
 // Hoje só há o do sistema. Quando o StaticProvider existir, ele entra ANTES
 // desta linha e passa a ganhar nos empates — e nenhum comando precisa mudar.
 func defaultManager() *runtimes.Manager {
-	return runtimes.NewManager(&runtimes.SystemProvider{})
+	var providers []runtimes.Provider
+
+	// Ordem importa: o Provider estático vem primeiro, então em caso de
+	// empate de versão o PHP isolado ganha do PHP do sistema. Isolamento é
+	// o objetivo do projeto; o do sistema é a rede de segurança.
+	if sp, err := staticProvider(); err == nil {
+		providers = append(providers, sp)
+	}
+	providers = append(providers, &runtimes.SystemProvider{})
+
+	return runtimes.NewManager(providers...)
 }
 
 // phpCmd despacha os subcomandos de `devm php`.
 func phpCmd(w io.Writer, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprint(w, "uso: devm php <list|which|use> [argumentos]\n")
+		fmt.Fprint(w, "uso: devm php <list|available|install|use|which> [argumentos]\n")
 		return nil
 	}
 
@@ -33,6 +43,10 @@ func phpCmd(w io.Writer, args []string) error {
 		return phpWhichCmd(w, args[1:])
 	case "use":
 		return phpUseCmd(w, args[1:])
+	case "install":
+		return phpInstallCmd(w, args[1:])
+	case "available", "avail":
+		return phpAvailableCmd(w, args[1:])
 	default:
 		return fmt.Errorf("subcomando desconhecido: php %q", args[0])
 	}

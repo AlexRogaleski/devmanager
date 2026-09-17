@@ -61,7 +61,8 @@ type Installer interface {
 	Installable(ctx context.Context) ([]semver.Version, error)
 
 	// Install baixa e instala uma versão, devolvendo o runtime pronto.
-	Install(ctx context.Context, v semver.Version) (Runtime, error)
+	// prog pode ser nil quando não há interesse no progresso.
+	Install(ctx context.Context, v semver.Version, prog Progresso) (Runtime, error)
 }
 
 // Manager reúne todos os Providers e responde as perguntas do Dev Manager.

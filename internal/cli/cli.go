@@ -85,6 +85,8 @@ Runtimes:
   php list   lista as versões de PHP disponíveis
   php which  mostra qual PHP satisfaz uma constraint
   php use    fixa a versão de PHP do projeto no devmanager.yaml
+  php avail  lista versões que podem ser instaladas
+  php install  baixa uma versão de PHP isolada do sistema
 
 Outros:
   version    mostra a versão do Dev Manager
