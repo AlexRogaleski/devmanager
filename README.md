@@ -1,0 +1,241 @@
+# Dev Manager
+
+Ambiente de desenvolvimento local para projetos Laravel/PHP, sem um contêiner
+por projeto.
+
+```
+$ devm start -d
+suma rodando em segundo plano
+  PHP        8.5.8
+  serve      php artisan serve --host=127.0.0.1 --port=41859
+  vite       npm run dev
+
+  https://suma.test
+```
+
+O PHP roda **nativo**, como binário estático isolado do sistema. Só a
+infraestrutura — banco, Redis, Mailpit — vai para contêiner, e é
+**compartilhada** entre os projetos: cada um recebe seu próprio banco dentro
+do mesmo servidor.
+
+Medido com dois projetos reais rodando ao mesmo tempo:
+
+| | contêineres | memória em contêiner |
+|---|---|---|
+| Laravel Sail | 7 | ~5 GB |
+| Dev Manager | 3 | 38 MB |
+
+Portas são alocadas automaticamente, então dois projetos sobem juntos sem
+configuração — que é o atrito que motivou o projeto.
+
+## Instalação
+
+Precisa de Go 1.26+ para compilar e de Docker **ou** Podman para os serviços.
+
+```sh
+git clone https://github.com/AlexRogaleski/devmanager
+cd devmanager
+make install-host
+```
+
+`make install-host` compila um binário **estático** (`CGO_ENABLED=0`) em
+`~/.local/bin/devm`. Estático porque ele precisa rodar em qualquer Linux
+independente da versão da glibc — inclusive quando compilado dentro de um
+container de desenvolvimento e executado no host.
+
+### Configuração da máquina
+
+Três ajustes de sistema, **uma vez por máquina**:
+
+```sh
+devm setup           # mostra o que falta e os comandos
+devm setup --apply   # executa, pedindo a senha do sudo
+```
+
+| ajuste | para quê |
+|---|---|
+| `systemd-resolved` | fazer `.test` resolver para o loopback |
+| `net.ipv4.ip_unprivileged_port_start=80` | abrir as portas 80 e 443 sem root |
+| certificado da CA local | HTTPS sem aviso de inseguro |
+
+O Firefox mantém armazenamento de certificados próprio e ignora o do sistema.
+Para ele: **Configurações → Privacidade → Certificados → Ver certificados →
+Autoridades → Importar**, marcando "confiar para identificar sites".
+
+> **Por que `sysctl` e não `setcap`?** Capacidades são atributos do arquivo, e
+> toda atualização do binário as apaga em silêncio — o sintoma é o proxy voltar
+> para as portas alternativas depois de um update, sem ninguém entender por
+> quê. O `sysctl` é do sistema e sobrevive a qualquer troca de binário.
+
+## Uso
+
+### Configurar um projeto
+
+Crie um `devmanager.yaml` na raiz e versione junto com o código:
+
+```yaml
+php: "8.4"
+
+services:
+  - mysql:8.4
+  - redis
+  - mailpit
+```
+
+Sem o arquivo, o Dev Manager lê o `require.php` do `composer.json` e usa a
+maior versão compatível instalada. O `devmanager.yaml` **vence** a detecção
+automática: é como você fixa a versão que roda em produção.
+
+```sh
+devm php use 8.4     # grava a versão no devmanager.yaml
+devm php use --clear # volta a seguir o composer.json
+```
+
+### Preparar e rodar
+
+```sh
+devm up          # dependências, .env, chave, serviços, banco do projeto
+devm start -d    # sobe servidor e frontend em segundo plano
+devm ps          # o que está rodando
+devm logs suma -f
+devm stop suma
+```
+
+`devm up` é idempotente: rodar de novo não reescreve nada que já esteja certo.
+
+### Executar comandos
+
+```sh
+devm artisan migrate
+devm composer require pacote/nome
+devm run npm run build
+```
+
+Sempre com o PHP do projeto, mesmo de dentro de uma subpasta. O `composer` é
+o phar oficial, baixado e verificado por checksum — não o do sistema, que em
+várias distribuições carrega bibliotecas próprias e exige extensões que um PHP
+estático enxuto não tem.
+
+### Serviços
+
+```sh
+devm service catalog              # o que dá para subir
+devm service list                 # o que está rodando
+devm service start postgres:17    # sobe avulso
+devm service remove redis --data  # remove; --data apaga o volume
+devm service engine docker        # fixa o runtime de contêiner
+```
+
+Os serviços são compartilhados por versão: `devm-mysql-8-4` atende todos os
+projetos que declaram `mysql:8.4`. O isolamento vem do banco — o projeto
+`appmake-erp` recebe o banco `appmake_erp`, criado automaticamente, e as
+credenciais vão para o `.env`.
+
+Se a porta oficial estiver ocupada, outra livre é escolhida e **anunciada**.
+
+### Runtimes
+
+```sh
+devm php list       # instalados
+devm php available  # instaláveis
+devm php install 8.3
+devm php which "^8.2"
+```
+
+Os binários vêm do [static-php-cli](https://github.com/crazywhalecc/static-php-cli)
+e ficam em `~/.local/share/devmanager/runtimes/`. Nenhum toca no PHP do sistema.
+
+> O build padrão (`common`) tem `pdo_sqlite` e `pdo_pgsql`, mas **não** tem
+> `intl` nem `readline` — o segundo significa que `artisan tinker` interativo
+> não funciona. `DEVMANAGER_PHP_VARIANT=bulk` troca o conjunto, ganhando
+> `intl`, `readline` e `opcache` e perdendo os drivers de SQLite e PostgreSQL.
+> Nenhum build publicado é completo para Laravel; `devm php install` lista o
+> que falta em cada um.
+
+### Editores
+
+```sh
+devm ide         # mostra o que seria configurado
+devm ide apply   # grava
+```
+
+Aponta o VS Code (`.vscode/settings.json`) e o PhpStorm (`.idea/php.xml`) para
+o PHP do projeto. A edição é cirúrgica: comentários, ordem e demais chaves são
+preservados.
+
+### Daemon
+
+Os projetos rodam sob um daemon, então continuam de pé com o terminal fechado.
+
+```sh
+devm daemon status
+devm daemon start
+devm daemon stop       # derruba TODOS os ambientes junto
+devm daemon logs
+devm daemon install    # grava o unit do systemd para subir no login
+```
+
+## Como funciona
+
+```
+                        devm (CLI)
+                            │  socket unix, API JSON
+                     ┌──────┴──────┐
+                     │   daemon    │
+                     └──────┬──────┘
+            ┌───────────────┼───────────────┐
+        supervisor        proxy            dns
+       (processos)     (*.test, TLS)    (:5354)
+            │               │
+      PHP estático     Caddy? não:
+      + node nativo    httputil.ReverseProxy
+            │
+        ┌───┴────────────────┐
+        │  serviços em       │
+        │  contêiner         │
+        │  (docker/podman)   │
+        └────────────────────┘
+```
+
+O proxy roteia por nome de host para a porta que o daemon alocou, e emite
+certificados no handshake a partir de uma CA local — projeto novo tem HTTPS no
+primeiro acesso, sem passo de configuração.
+
+### Dependências
+
+Quatro, no total: `gopkg.in/yaml.v3`, `github.com/miekg/dns` e as duas
+indiretas dele (`golang.org/x/net` e `x/sys`). Binário de 14 MB.
+
+Caddy foi avaliado e recusado: 142 dependências e 64 MB de binário para o que
+`httputil.ReverseProxy` e `crypto/x509` fazem em ~300 linhas. Já o servidor
+DNS **não** existe na stdlib, e escrever um à mão significa acertar compressão
+de nomes e EDNS — daí a dependência.
+
+As engines de contêiner são acessadas pelo **binário de CLI**, não pelas
+bibliotecas Go de podman e docker: as CLIs aceitam os mesmos argumentos, então
+uma implementação atende as duas.
+
+## Desenvolvimento
+
+```sh
+make test    # suíte
+make race    # com detector de corrida (precisa de gcc)
+make cover   # cobertura por pacote
+make vet fmt
+make cross   # confirma linux e macOS, amd64 e arm64
+```
+
+O código é comentado em português, explicando **por que** cada decisão foi
+tomada — não o que a linha faz.
+
+## Limitações conhecidas
+
+- **Linux apenas, por enquanto.** O código evita dependências específicas de
+  plataforma e compila para macOS, mas a configuração automática de DNS assume
+  `systemd-resolved`.
+- **Porta 80 disputada.** Se outro servidor já a ocupa, o proxy cai para 8080
+  e avisa. HTTP e HTTPS caem de forma independente.
+- **`artisan tinker` interativo** não funciona no build `common` do PHP, por
+  falta de `readline`. O `--execute` funciona.
+- **Reiniciar o daemon derruba todos os ambientes.** Eles não voltam sozinhos;
+  `devm start -d <projeto>` religa.

@@ -71,6 +71,8 @@ func Run(args []string, stdio IO) error {
 		return proxyCmd(stdio, resto)
 	case "dns":
 		return dnsCmd(stdio, resto)
+	case "setup":
+		return setupCmd(stdio, resto)
 	case "run":
 		return runCmd(stdio, resto)
 	case "artisan":
@@ -143,6 +145,9 @@ Daemon:
   daemon stop      encerra o daemon e todos os ambientes
   daemon logs      mostra o log do próprio daemon
   daemon install   grava o unit do systemd para subir no login
+
+Configuração da máquina:
+  setup            mostra o que falta configurar (--apply executa)
 
 Domínios locais:
   proxy status     mostra o proxy e os domínios ativos
