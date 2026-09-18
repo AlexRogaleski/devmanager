@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -349,39 +350,15 @@ func abrirLog() (*os.File, error) {
 	return f, nil
 }
 
-// unitSystemd é o modelo do serviço de usuário.
-//
-// Type=simple porque o `daemon run` fica em primeiro plano: um processo que
-// se bifurca sozinho exigiria Type=forking e um arquivo de PID, e confundiria
-// o systemd sobre qual processo observar.
-//
-// Serviço de USUÁRIO (systemctl --user), não de sistema: o daemon roda com as
-// permissões do dev, enxerga o home dele e o Podman rootless dele. Um serviço
-// de sistema precisaria de root e quebraria todo o modelo de isolamento.
-const unitSystemd = `[Unit]
-Description=Dev Manager
-Documentation=https://github.com/AlexRogaleski/devmanager
-After=default.target
-
-[Service]
-Type=simple
-ExecStart=%s daemon run
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=default.target
-`
-
-// daemonInstallCmd grava o unit do systemd para o daemon subir no login.
+// daemonInstallCmd grava o serviço que faz o daemon subir no login.
 //
 // Escrevemos o arquivo, mas NÃO habilitamos o serviço: ligar algo para rodar
 // em todo login é decisão do usuário, não efeito colateral de um comando de
-// instalação. O comando a rodar fica impresso.
+// instalação. Os comandos a rodar ficam impressos.
 func daemonInstallCmd(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("daemon install", flag.ContinueOnError)
 	fs.SetOutput(w)
-	forcar := fs.Bool("force", false, "sobrescreve um unit existente")
+	forcar := fs.Bool("force", false, "sobrescreve um arquivo existente")
 
 	if _, err := parseArgs(fs, args); err != nil {
 		return err
@@ -391,43 +368,47 @@ func daemonInstallCmd(w io.Writer, args []string) error {
 	if err != nil {
 		return fmt.Errorf("localizando o próprio binário: %w", err)
 	}
-	// O unit precisa do caminho REAL: se o binário foi chamado por um
-	// symlink que depois muda, o systemd apontaria para o lugar errado.
+	// O serviço precisa do caminho REAL: se o binário foi chamado por um
+	// symlink que depois muda, o serviço apontaria para o lugar errado.
 	if real, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = real
 	}
 
-	destino, err := caminhoDoUnit()
-	if err != nil {
-		return err
-	}
-
-	if _, err := os.Stat(destino); err == nil && !*forcar {
-		return fmt.Errorf("%s já existe (use --force para sobrescrever)", destino)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(destino), 0o755); err != nil {
-		return fmt.Errorf("criando %s: %w", filepath.Dir(destino), err)
-	}
-	if err := os.WriteFile(destino, []byte(fmt.Sprintf(unitSystemd, exe)), 0o644); err != nil {
-		return fmt.Errorf("gravando %s: %w", destino, err)
-	}
-
-	fmt.Fprintf(w, "unit gravado em %s\n\n", destino)
-	fmt.Fprintln(w, "para habilitar no login:")
-	fmt.Fprintln(w, "  systemctl --user daemon-reload")
-	fmt.Fprintln(w, "  systemctl --user enable --now devmanager")
-	return nil
-}
-
-func caminhoDoUnit() (string, error) {
-	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
-		return filepath.Join(dir, "systemd", "user", "devmanager.service"), nil
-	}
-
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("localizando o diretório home: %w", err)
+		return fmt.Errorf("localizando o diretório home: %w", err)
 	}
-	return filepath.Join(home, ".config", "systemd", "user", "devmanager.service"), nil
+
+	servico, ok := servicoDeLoginPara(runtime.GOOS, dadosDoServico{
+		Exe:        exe,
+		Home:       home,
+		ConfigHome: os.Getenv("XDG_CONFIG_HOME"),
+		Path:       os.Getenv("PATH"),
+		Log:        caminhoDoLog(),
+	})
+	if !ok {
+		return fmt.Errorf("subir no login não é suportado em %s; use `devm daemon start`", runtime.GOOS)
+	}
+
+	if _, err := os.Stat(servico.arquivo); err == nil && !*forcar {
+		return fmt.Errorf("%s já existe (use --force para sobrescrever)", servico.arquivo)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(servico.arquivo), 0o755); err != nil {
+		return fmt.Errorf("criando %s: %w", filepath.Dir(servico.arquivo), err)
+	}
+	if err := os.WriteFile(servico.arquivo, []byte(servico.conteudo), 0o644); err != nil {
+		return fmt.Errorf("gravando %s: %w", servico.arquivo, err)
+	}
+
+	fmt.Fprintf(w, "gravado em %s\n\n", servico.arquivo)
+	fmt.Fprintln(w, "para subir no login:")
+	for _, c := range servico.ligar {
+		fmt.Fprintf(w, "  %s\n", c)
+	}
+	fmt.Fprintln(w, "\npara desligar depois:")
+	for _, c := range servico.desligar {
+		fmt.Fprintf(w, "  %s\n", c)
+	}
+	return nil
 }

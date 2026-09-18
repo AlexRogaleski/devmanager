@@ -157,7 +157,7 @@ Daemon:
   daemon start     inicia o daemon
   daemon stop      encerra o daemon e todos os ambientes
   daemon logs      mostra o log do próprio daemon
-  daemon install   grava o unit do systemd para subir no login
+  daemon install   faz o daemon subir no login (systemd ou launchd)
 
 Configuração da máquina:
   setup            mostra o que falta configurar (--apply executa)
