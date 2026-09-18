@@ -53,7 +53,19 @@ type Servidor struct {
 
 	mu       sync.Mutex
 	udp, tcp *dns.Server
+
+	// pronto fecha quando UDP e TCP estão escutando de fato. Criado em Novo,
+	// antes de qualquer goroutine existir, pelo mesmo motivo do proxy: um
+	// campo escrito dentro de Servir e lido de fora é uma corrida.
+	pronto chan struct{}
 }
+
+// Pronto fecha quando o servidor está escutando em UDP e TCP.
+//
+// Existe para o daemon avisar o resolvedor do sistema no momento certo. Avisar
+// antes de a porta abrir faria o resolvedor testar, falhar e desistir de novo
+// — reproduzindo exatamente o problema que o aviso existe para desfazer.
+func (s *Servidor) Pronto() <-chan struct{} { return s.pronto }
 
 func Novo(porta int, saida io.Writer) *Servidor {
 	if porta == 0 {
@@ -62,7 +74,7 @@ func Novo(porta int, saida io.Writer) *Servidor {
 	if saida == nil {
 		saida = io.Discard
 	}
-	return &Servidor{Porta: porta, TLD: TLDPadrao, Saida: saida, TTL: 10}
+	return &Servidor{Porta: porta, TLD: TLDPadrao, Saida: saida, TTL: 10, pronto: make(chan struct{})}
 }
 
 // Endereco devolve onde o servidor atende.
@@ -80,11 +92,22 @@ func (s *Servidor) Servir(ctx context.Context) error {
 	handler := dns.HandlerFunc(s.atender)
 	addr := s.Endereco()
 
+	// NotifyStartedFunc é chamado pelo miekg/dns quando o listener abriu. Os
+	// dois precisam abrir para o servidor contar como pronto: um resolvedor
+	// rebaixado para TCP não se contenta com o UDP de pé.
+	var subindo sync.WaitGroup
+	subindo.Add(2)
+
 	s.mu.Lock()
-	s.udp = &dns.Server{Addr: addr, Net: "udp", Handler: handler}
-	s.tcp = &dns.Server{Addr: addr, Net: "tcp", Handler: handler}
+	s.udp = &dns.Server{Addr: addr, Net: "udp", Handler: handler, NotifyStartedFunc: subindo.Done}
+	s.tcp = &dns.Server{Addr: addr, Net: "tcp", Handler: handler, NotifyStartedFunc: subindo.Done}
 	udp, tcp := s.udp, s.tcp
 	s.mu.Unlock()
+
+	go func() {
+		subindo.Wait()
+		close(s.pronto)
+	}()
 
 	erros := make(chan error, 2)
 	go func() { erros <- udp.ListenAndServe() }()

@@ -190,3 +190,44 @@ func TestAtendeReconheceOTLD(t *testing.T) {
 		}
 	}
 }
+
+// Pronto só pode fechar com a porta aberta: é o sinal que o daemon usa para
+// avisar o resolvedor do sistema, e um aviso adiantado faria o resolvedor
+// testar, falhar e desistir de novo.
+func TestProntoFechaComOServidorEscutando(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	porta := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+
+	s := Novo(porta, nil)
+
+	select {
+	case <-s.Pronto():
+		t.Fatal("Pronto fechou antes de Servir ser chamado")
+	default:
+	}
+
+	ctx, parar := context.WithCancel(context.Background())
+	defer parar()
+	go func() { _ = s.Servir(ctx) }()
+
+	select {
+	case <-s.Pronto():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Pronto não fechou")
+	}
+
+	// Com Pronto fechado, as duas pernas respondem já — sem esperar.
+	for _, rede := range []string{"udp", "tcp"} {
+		resp, err := consultar(s.Endereco(), "app.test.", dns.TypeA, rede)
+		if err != nil {
+			t.Fatalf("%s não respondeu logo depois de Pronto: %v", rede, err)
+		}
+		if len(resp.Answer) != 1 {
+			t.Errorf("%s: respostas = %d", rede, len(resp.Answer))
+		}
+	}
+}

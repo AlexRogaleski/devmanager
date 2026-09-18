@@ -138,6 +138,38 @@ func (s *Servidor) iniciarDNS(ctx context.Context) {
 			s.logf("dns encerrado com erro: %v", err)
 		}
 	}()
+
+	go s.avisarResolvedor(ctx, d)
+}
+
+// avisarResolvedor diz ao resolvedor do sistema que o servidor DNS voltou.
+//
+// Sem isso, depois de um reboot em que algo consultou um .test com o daemon
+// parado, o systemd-resolved desiste do servidor e nunca mais tenta: o daemon
+// sobe, responde perfeitamente, e nenhuma consulta chega até ele. O sintoma
+// é "o .test parou de funcionar depois que reiniciei o computador".
+//
+// É melhor esforço. Falhar aqui não derruba nada — só registra o comando que
+// resolveria, para quem for investigar pelo `devm daemon logs`.
+func (s *Servidor) avisarResolvedor(ctx context.Context, d *dns.Servidor) {
+	select {
+	case <-d.Pronto():
+	case <-ctx.Done():
+		return
+	case <-time.After(10 * time.Second):
+		s.logf("dns: o servidor não ficou pronto a tempo; o resolvedor do sistema não foi avisado")
+		return
+	}
+
+	feitos, err := dns.NotificarSistema(ctx, d.TLD)
+	if err != nil {
+		s.logf("dns: não consegui avisar o resolvedor do sistema (%v); se o .%s não resolver, rode o comando à mão",
+			err, d.TLD)
+		return
+	}
+	if len(feitos) > 0 {
+		s.logf("dns: resolvedor do sistema avisado (%s)", strings.Join(feitos, "; "))
+	}
 }
 
 // InfoProxy descreve o estado do proxy para a API.

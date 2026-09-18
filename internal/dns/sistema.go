@@ -40,6 +40,10 @@ type integracao struct {
 
 	// recarregar são os comandos que fazem o sistema reler a configuração.
 	recarregar []string
+
+	// notificar avisa o resolvedor de que o servidor voltou. Roda sem
+	// privilégio, pelo próprio daemon, a cada vez que o DNS sobe.
+	notificar [][]string
 }
 
 // integracaoPara devolve a integração de um sistema, ou false se não houver.
@@ -70,6 +74,23 @@ func integracaoPara(goos, tld string) (*integracao, bool) {
 			},
 
 			recarregar: []string{"sudo systemctl restart systemd-resolved"},
+
+			// Se algo consulta um .test enquanto o daemon está parado — o
+			// navegador reabrindo abas depois de um reboot, por exemplo —,
+			// o resolved rebaixa o servidor de UDP+EDNS0 para UDP, depois
+			// para TCP, e desiste. Um servidor que nunca respondeu desde o
+			// boot não tem período de carência que expire, então ele NÃO
+			// volta a tentar quando o daemon sobe: todo .test passa a dar
+			// SERVFAIL sem que uma única consulta chegue até nós.
+			//
+			// Esquecer o que ele aprendeu sobre o servidor resolve. No
+			// systemd 259 as duas chamadas não pedem senha; o
+			// --no-ask-password garante que, numa versão em que peçam,
+			// elas falhem em vez de abrir um diálogo na tela.
+			notificar: [][]string{
+				{"resolvectl", "--no-ask-password", "reset-server-features"},
+				{"resolvectl", "--no-ask-password", "flush-caches"},
+			},
 		}, true
 
 	case "darwin":
@@ -290,6 +311,32 @@ func servicoAtivo(ctx context.Context, unidade string) bool {
 		return false
 	}
 	return strings.TrimSpace(string(saida)) == "active"
+}
+
+// NotificarSistema avisa o resolvedor do sistema de que o servidor DNS está
+// de pé. O daemon chama isto logo depois de abrir a porta.
+//
+// Devolve os comandos executados, para o log mostrar o que foi feito. Um erro
+// nomeia o comando que falhou, para ele poder ser copiado e rodado à mão. Em
+// sistemas sem nada a notificar, não faz nada e devolve nil.
+func NotificarSistema(ctx context.Context, tld string) ([]string, error) {
+	integ, ok := integracaoPara(runtime.GOOS, tld)
+	if !ok {
+		return nil, nil
+	}
+
+	ctx, cancelar := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelar()
+
+	var feitos []string
+	for _, argv := range integ.notificar {
+		comando := strings.Join(argv, " ")
+		if saida, err := exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput(); err != nil {
+			return feitos, fmt.Errorf("%s: %w: %s", comando, err, strings.TrimSpace(string(saida)))
+		}
+		feitos = append(feitos, comando)
+	}
+	return feitos, nil
 }
 
 // ComandosDeInstalacao devolve o que o usuário precisa rodar como root, um
