@@ -40,7 +40,7 @@ func passoServico(p *project.Project, opts Opcoes, spec services.Spec) Passo {
 	}
 
 	if opts.Servicos == nil {
-		passo.Bloqueado = "precisa de podman ou docker"
+		passo.Bloqueado = "precisa de docker ou podman"
 		return passo
 	}
 

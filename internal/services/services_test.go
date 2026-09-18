@@ -325,18 +325,64 @@ func TestLogs(t *testing.T) {
 	}
 }
 
-// Detectar precisa achar o engine no PATH e recusar com clareza quando não há.
-func TestDetectar(t *testing.T) {
-	dir := t.TempDir()
-	falso := filepath.Join(dir, "podman")
-	if err := os.WriteFile(falso, []byte(scriptEngineFalso), 0o755); err != nil {
+// engineNoPath instala um engine falso num diretório e o coloca à frente do
+// PATH, sombreando qualquer binário real de mesmo nome.
+//
+// O prefixo é o ponto: o script falso chama mkdir, ls e cut, que vêm do PATH
+// original, então não dá para substituí-lo por completo. E sombrear é o que
+// torna os testes independentes do que a máquina tem instalado — o CI vem com
+// docker pronto, e sem isso o resultado mudaria de lugar para lugar.
+//
+// Passar quebrado=true instala um script que falha como um engine cujo
+// serviço está parado.
+func engineNoPath(t *testing.T, dir, nome string, quebrado bool) {
+	t.Helper()
+
+	corpo := scriptEngineFalso
+	if quebrado {
+		corpo = "#!/bin/sh\necho 'não foi possível conectar ao serviço' >&2\nexit 1\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, nome), []byte(corpo), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Setenv("FAKE_ESTADO", filepath.Join(dir, "estado"))
-	// O script falso chama mkdir, ls e cut, que vêm do PATH original —
-	// por isso prefixamos em vez de substituir.
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if !strings.HasPrefix(os.Getenv("PATH"), dir+string(os.PathListSeparator)) {
+		t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+}
+
+// Em modo auto, com os dois disponíveis, o docker vence.
+//
+// A ordem inversa erraria num caso comum: em Fedora e derivados o podman
+// costuma existir só por causa do distrobox, enquanto o trabalho acontece no
+// docker — e os serviços iriam para um engine que a pessoa nem abre.
+func TestDetectarPreferoDockerEmAuto(t *testing.T) {
+	dir := t.TempDir()
+	engineNoPath(t, dir, "docker", false)
+	engineNoPath(t, dir, "podman", false)
+
+	e, err := Detectar(context.Background(), "auto")
+	if err != nil {
+		t.Fatalf("Detectar falhou: %v", err)
+	}
+	if e.Bin != "docker" {
+		t.Errorf("Bin = %q, esperava docker", e.Bin)
+	}
+	if e.QualificaImagem {
+		t.Error("o docker completa o registro sozinho; a flag não deveria estar ligada")
+	}
+}
+
+// Docker instalado mas com o serviço parado cai para o podman.
+//
+// É por isso que a detecção pergunta a VERSÃO em vez de só procurar o
+// executável: um binário presente e mudo levaria a falha para a hora de subir
+// um serviço, longe da causa.
+func TestDetectarCaiParaPodmanQuandoODockerNaoResponde(t *testing.T) {
+	dir := t.TempDir()
+	engineNoPath(t, dir, "docker", true)
+	engineNoPath(t, dir, "podman", false)
 
 	e, err := Detectar(context.Background(), "auto")
 	if err != nil {
@@ -366,20 +412,8 @@ func TestDetectar(t *testing.T) {
 // Sombrear o binário real é o que torna o resultado igual nos dois lugares.
 func TestDetectarRespeitaPreferencia(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "podman"), []byte(scriptEngineFalso), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// Um binário instalado com o serviço parado é um caso real, e é o que o
-	// código trata ao perguntar a versão em vez de só procurar o executável.
-	docker := "#!/bin/sh\necho 'Cannot connect to the Docker daemon' >&2\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	t.Setenv("FAKE_ESTADO", filepath.Join(dir, "estado"))
-	// dir vem PRIMEIRO no PATH: é o prefixo que faz os falsos vencerem
-	// qualquer podman ou docker de verdade que a máquina tenha.
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	engineNoPath(t, dir, "podman", false)
+	engineNoPath(t, dir, "docker", true)
 
 	// Preferindo docker, o podman falso — que funcionaria — é ignorado.
 	_, err := Detectar(context.Background(), "docker")
@@ -412,8 +446,11 @@ func TestDetectarSemEngine(t *testing.T) {
 	if !errors.As(err, &indisponivel) {
 		t.Fatalf("erro = %T, esperava *EngineIndisponivelError", err)
 	}
-	// A mensagem precisa dizer o que fazer, não só o que faltou.
-	if !strings.Contains(err.Error(), "instale") {
-		t.Errorf("a mensagem deveria orientar: %v", err)
+	// A mensagem precisa dizer o que ficou impossível e o que fazer, não só
+	// o que faltou.
+	for _, esperado := range []string{"não há como subir", "instale o docker"} {
+		if !strings.Contains(err.Error(), esperado) {
+			t.Errorf("a mensagem deveria conter %q: %v", esperado, err)
+		}
 	}
 }

@@ -28,13 +28,11 @@ const (
 // isto descreve como ESTA MÁQUINA deve se comportar, e não faz sentido
 // compartilhar com o time.
 type Global struct {
-	// Engine escolhe o runtime de contêiner: auto, podman ou docker.
+	// Engine escolhe o runtime de contêiner: auto, docker ou podman.
 	//
-	// A detecção automática tenta podman antes de docker, o que é a escolha
-	// certa em sistemas imutáveis — mas erra feio num caso comum: quem tem
-	// podman instalado APENAS por causa do distrobox e trabalha com docker.
-	// Nesse cenário os serviços iriam para um engine que a pessoa nem usa,
-	// invisíveis no `docker ps` dela.
+	// A detecção automática tenta docker antes de podman. Fixar aqui serve a
+	// quem quer o contrário — em sistemas imutáveis o podman rootless é a
+	// escolha melhor, e nada além desta chave faz a detecção saber disso.
 	Engine string `yaml:"engine,omitempty"`
 }
 
@@ -126,6 +124,6 @@ func ValidarEngine(valor string) error {
 	case EngineAuto, EnginePodman, EngineDocker:
 		return nil
 	default:
-		return fmt.Errorf("engine inválido: %q (use auto, podman ou docker)", valor)
+		return fmt.Errorf("engine inválido: %q (use auto, docker ou podman)", valor)
 	}
 }

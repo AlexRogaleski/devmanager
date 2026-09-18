@@ -67,23 +67,31 @@ func DetectarConfigurado(ctx context.Context) (*Engine, error) {
 
 // Detectar encontra um runtime de contêiner utilizável.
 //
-// Com preferencia vazia ou "auto", a ordem é Podman antes de Docker: ele roda
-// rootless por padrão, o que torna a ferramenta viável em sistemas imutáveis
-// sem pedir root.
+// Com preferencia vazia ou "auto", a ordem é Docker antes de Podman.
 //
-// Mas essa heurística erra num caso comum, e por isso a preferência existe:
-// quem tem podman instalado APENAS por causa do distrobox ou do toolbox, e
-// trabalha com docker. A presença do binário podman, nesses sistemas, não diz
-// nada sobre o que a pessoa usa — e escolher errado colocaria os serviços num
-// engine que ela nem abre, invisíveis no `docker ps` dela.
+// A ordem inversa parece melhor no papel — o Podman roda rootless, o que
+// torna a ferramenta viável em sistemas imutáveis sem pedir root — e erra
+// num caso muito comum: em Fedora Silverblue, Bazzite e derivados o podman
+// costuma estar instalado APENAS porque o distrobox ou o toolbox o exigem,
+// enquanto o trabalho de fato acontece no docker. A presença do binário
+// podman, nesses sistemas, não diz nada sobre o que a pessoa usa — e
+// escolher errado colocaria os serviços num engine que ela nem abre,
+// invisíveis no `docker ps` dela.
+//
+// Docker primeiro também é o que a origem do projeto sugere: quem vem do
+// Laravel Sail tem docker instalado e em uso.
+//
+// A preferência explícita continua existindo para quem quer o contrário, e
+// `devm service engine podman` inverte a ordem de vez.
 //
 // Só a presença do binário não basta: o Docker precisa de um daemon rodando,
 // e um binário instalado com o serviço parado falharia depois, longe da causa.
-// Por isso perguntamos a versão ao engine, o que exige que ele responda.
+// Por isso perguntamos a versão ao engine, o que exige que ele responda —
+// um docker instalado com o daemon parado cai para o podman por este caminho.
 func Detectar(ctx context.Context, preferencia string) (*Engine, error) {
 	var tentativas []string
 
-	ordem := []string{"podman", "docker"}
+	ordem := []string{"docker", "podman"}
 	switch preferencia {
 	case "podman":
 		ordem = []string{"podman"}
@@ -175,6 +183,7 @@ func (e *EngineIndisponivelError) Error() string {
 		return b.String()
 	}
 
-	b.WriteString("\n\n  instale o podman (roda sem root) ou o docker")
+	b.WriteString("\n\n  sem um dos dois não há como subir banco, Redis ou Mailpit" +
+		"\n  instale o docker, ou o podman (que roda sem root)")
 	return b.String()
 }
