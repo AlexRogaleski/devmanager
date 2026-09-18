@@ -87,13 +87,13 @@ func NovoServidor(socket, versao string, saida io.Writer) *Servidor {
 // Apache do sistema, e perder a supervisão de processos por causa disso seria
 // desproporcional. O proxy é um recurso a mais, não o coração da ferramenta.
 func (s *Servidor) iniciarProxy(ctx context.Context) {
-	dir, err := paths.DataDir()
+	dir, err := proxy.DirPadrao()
 	if err != nil {
 		s.logf("proxy indisponível: %v", err)
 		return
 	}
 
-	ca, err := proxy.CarregarOuCriar(filepath.Join(dir, "ca"))
+	ca, err := proxy.CarregarOuCriar(dir)
 	if err != nil {
 		s.logf("proxy indisponível: %v", err)
 		return

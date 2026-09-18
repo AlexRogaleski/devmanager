@@ -11,6 +11,7 @@ import (
 
 	"github.com/AlexRogaleski/devmanager/internal/client"
 	devmdns "github.com/AlexRogaleski/devmanager/internal/dns"
+	"github.com/AlexRogaleski/devmanager/internal/proxy"
 	"github.com/AlexRogaleski/devmanager/internal/setup"
 )
 
@@ -37,8 +38,7 @@ func setupCmd(stdio IO, args []string) error {
 	w := stdio.Out
 	ctx := context.Background()
 
-	endereco, tld, certCA := dadosDoDaemon(ctx)
-	plano := setup.Diagnosticar(ctx, endereco, tld, certCA)
+	plano := setup.Diagnosticar(ctx, dadosDoDaemon(ctx))
 
 	if *comoJSON {
 		saida, err := json.MarshalIndent(plano, "", "  ")
@@ -67,20 +67,24 @@ func setupCmd(stdio IO, args []string) error {
 		return nil
 	}
 
-	var semComandos []setup.Passo
+	// Um passo pendente pode não ter comando nenhum — o DNS configurado
+	// com o daemon parado, por exemplo, cujo conserto é `devm daemon
+	// start`. O detalhe já foi impresso embaixo do passo; aqui só entra o
+	// que o --apply de fato executaria.
+	var comComandos []setup.Passo
 	for _, p := range pendentes {
-		if len(p.Comandos) == 0 {
-			semComandos = append(semComandos, p)
+		if len(p.Comandos) > 0 {
+			comComandos = append(comComandos, p)
 		}
+	}
+	if len(comComandos) == 0 {
+		return nil
 	}
 
 	if !*aplicar {
 		fmt.Fprintln(w, "\ncomandos para configurar:")
 		fmt.Fprintln(w)
-		for _, passo := range pendentes {
-			if len(passo.Comandos) == 0 {
-				continue
-			}
+		for _, passo := range comComandos {
 			fmt.Fprintf(w, "  # %s\n", passo.Porque)
 			for _, c := range passo.Comandos {
 				fmt.Fprintf(w, "  %s\n", c)
@@ -88,14 +92,10 @@ func setupCmd(stdio IO, args []string) error {
 			fmt.Fprintln(w)
 		}
 		fmt.Fprintln(w, "ou rode `devm setup --apply` para executá-los agora")
-
-		for _, passo := range semComandos {
-			fmt.Fprintf(w, "\n%s: %s\n", passo.Nome, passo.Detalhe)
-		}
 		return nil
 	}
 
-	return aplicarPlano(w, pendentes)
+	return aplicarPlano(w, comComandos)
 }
 
 // aplicarPlano executa os comandos, um passo por vez.
@@ -137,25 +137,36 @@ func aplicarPlano(w io.Writer, pendentes []setup.Passo) error {
 //
 // Com o daemon parado caímos nos valores padrão: o diagnóstico continua útil
 // — dá para configurar o sistema ANTES de subir o daemon pela primeira vez.
-func dadosDoDaemon(ctx context.Context) (enderecoDNS, tld, certCA string) {
-	enderecoDNS = fmt.Sprintf("127.0.0.1:%d", devmdns.PortaPadrao)
-	tld = devmdns.TLDPadrao
+func dadosDoDaemon(ctx context.Context) setup.Entrada {
+	e := setup.Entrada{
+		EnderecoDNS: fmt.Sprintf("127.0.0.1:%d", devmdns.PortaPadrao),
+		TLD:         devmdns.TLDPadrao,
+
+		// O certificado é um arquivo, e existe com o daemon parado. Pedir
+		// ao daemon o caminho — como era — fazia o setup dizer "não há
+		// certificado" justamente no momento em que alguém configura a
+		// máquina antes de subir tudo.
+		CertCA: proxy.CertificadoPadrao(),
+	}
 
 	c, err := client.Padrao()
 	if err != nil {
-		return enderecoDNS, tld, ""
+		return e
 	}
-
 	info, err := c.Proxy(ctx)
 	if err != nil {
-		return enderecoDNS, tld, ""
+		return e
 	}
 
+	e.DaemonAtivo = true
 	if info.DNS.Endereco != "" {
-		enderecoDNS = info.DNS.Endereco
+		e.EnderecoDNS = info.DNS.Endereco
 	}
 	if info.DNS.TLD != "" {
-		tld = info.DNS.TLD
+		e.TLD = info.DNS.TLD
 	}
-	return enderecoDNS, tld, info.CertificadoCA
+	if info.CertificadoCA != "" {
+		e.CertCA = info.CertificadoCA
+	}
+	return e
 }

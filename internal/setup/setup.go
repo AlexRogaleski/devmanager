@@ -7,15 +7,19 @@
 package setup
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	devmdns "github.com/AlexRogaleski/devmanager/internal/dns"
+	"github.com/AlexRogaleski/devmanager/internal/shell"
 )
 
 // PortaMinimaDesejada é a menor porta que queremos poder abrir sem root.
@@ -63,22 +67,39 @@ func (p Plano) Script() string {
 	return b.String()
 }
 
+// Entrada é o que o diagnóstico precisa saber além da própria máquina.
+type Entrada struct {
+	EnderecoDNS string
+	TLD         string
+
+	// CertCA é o certificado da CA local; vazio se ela ainda não existe.
+	CertCA string
+
+	// DaemonAtivo muda o diagnóstico do DNS: quem responde pelos domínios
+	// é o servidor dentro do daemon, e com ele parado nenhuma configuração
+	// de sistema faz o .test resolver.
+	DaemonAtivo bool
+}
+
 // Diagnosticar monta o plano a partir do estado atual da máquina.
-func Diagnosticar(ctx context.Context, enderecoDNS, tld, certCA string) Plano {
+func Diagnosticar(ctx context.Context, e Entrada) Plano {
 	return Plano{Passos: []Passo{
-		passoDNS(ctx, enderecoDNS, tld),
+		decidirDNS(devmdns.Verificar(ctx, e.EnderecoDNS, e.TLD), e),
 		passoPortas(),
-		passoCA(certCA),
+		passoCA(ctx, e.CertCA),
 	}}
 }
 
-// passoDNS verifica a resolução dos domínios locais.
-func passoDNS(ctx context.Context, endereco, tld string) Passo {
-	estado := devmdns.Verificar(ctx, endereco, tld)
-
+// decidirDNS transforma o estado observado num passo.
+//
+// Separada de Verificar de propósito: Verificar olha a máquina — arquivos,
+// serviços, uma consulta de DNS de verdade —, e isto aqui só decide. Uma
+// decisão que recebe os fatos prontos se testa com um struct literal, sem
+// precisar de systemd-resolved, de /etc nem de rede.
+func decidirDNS(estado devmdns.Estado, e Entrada) Passo {
 	p := Passo{
-		Nome:   "resolução de " + tld,
-		Porque: "sem isso, " + tld + " não resolve e os projetos só abrem por 127.0.0.1:porta",
+		Nome:   "resolução de ." + e.TLD,
+		Porque: "sem isso, ." + e.TLD + " não resolve e os projetos só abrem por 127.0.0.1:porta",
 		Feito:  estado.Resolvendo,
 	}
 
@@ -94,10 +115,19 @@ func passoDNS(ctx context.Context, endereco, tld string) Passo {
 		return p
 	}
 
+	// Configurado e sem resolver, com o daemon parado: o que falta é o
+	// servidor, não a configuração. Oferecer regravar o arquivo e reiniciar
+	// o resolvedor custaria a senha do sudo para não mudar nada.
+	if estado.Configurado && !e.DaemonAtivo {
+		p.Detalhe = "configurado em " + estado.Arquivo +
+			", mas quem responde é o daemon, que está parado: devm daemon start"
+		return p
+	}
+
 	// A lista já vem com um comando por elemento. Ela era montada dividindo
 	// um texto por linha, o que partia um heredoc em pedaços executados
 	// separadamente pelo --apply.
-	comandos, err := devmdns.ComandosDeInstalacao(endereco, tld)
+	comandos, err := devmdns.ComandosDeInstalacao(e.EnderecoDNS, e.TLD)
 	if err != nil {
 		p.Detalhe = err.Error()
 		return p
@@ -157,59 +187,150 @@ func portaMinimaAtual() (int, error) {
 	return strconv.Atoi(strings.TrimSpace(string(dados)))
 }
 
-// passoCA instala o certificado local como autoridade confiável.
-func passoCA(cert string) Passo {
+// passoCA torna a CA local uma autoridade confiável.
+func passoCA(ctx context.Context, cert string) Passo {
 	p := Passo{
 		Nome:   "confiar no certificado local",
 		Porque: "sem isso, o HTTPS dos domínios locais aparece como inseguro",
 	}
 
 	if cert == "" {
-		p.Detalhe = "o proxy não está ativo; não há certificado para instalar"
+		p.Detalhe = "a CA é criada na primeira vez que o daemon sobe: devm daemon start"
 		return p
 	}
 
-	destino, comandos := instalacaoDaCA(cert)
-	if destino == "" {
+	conf, ok := confiancaPara(runtime.GOOS, cert)
+	if !ok {
 		p.Detalhe = "instale " + cert + " manualmente como autoridade confiável"
 		return p
 	}
 
-	if _, err := os.Stat(destino); err == nil {
+	if conf.instalada(ctx) {
 		p.Feito = true
-		p.Detalhe = "instalado em " + destino
+		p.Detalhe = "confiável: " + conf.onde
 		return p
 	}
 
-	p.Comandos = comandos
+	p.Comandos = conf.comandos
 	return p
 }
 
-// instalacaoDaCA devolve o destino e os comandos, conforme a distribuição.
+// confianca descreve como tornar a CA confiável num sistema.
+//
+// É a ÚNICA descrição disso no projeto. Havia duas — uma aqui, só de Linux,
+// e outra no `devm proxy ca`, que já conhecia o macOS —, e as duas
+// divergiam: o setup não sabia configurar o Mac que o proxy ca explicava.
+type confianca struct {
+	// onde nomeia o armazenamento, para as mensagens.
+	onde string
+
+	comandos []string
+
+	// instalada responde se a CA ATUAL é confiável — não uma CA qualquer
+	// com o mesmo nome, que ficou de uma instalação anterior.
+	instalada func(ctx context.Context) bool
+}
+
+func confiancaPara(goos, cert string) (*confianca, bool) {
+	switch goos {
+	case "linux":
+		return confiancaLinux(ancorasLinux, cert)
+	case "darwin":
+		return confiancaMacOS(cert), true
+	}
+	return nil, false
+}
+
+// ancora é um diretório de autoridades confiáveis de uma família de
+// distribuições.
+type ancora struct {
+	dir, atualizar string
+}
+
+// ancorasLinux, na ordem de preferência.
 //
 // Detectamos pelo diretório que existe, e não pelo /etc/os-release: derivadas
 // como Aurora, Bazzite e Nobara reportam nomes próprios, e uma lista de
 // distribuições conhecidas ficaria desatualizada a cada nova. O diretório de
 // âncoras, esse, não muda.
-func instalacaoDaCA(cert string) (string, []string) {
-	candidatos := []struct {
-		dir, nome, atualizar string
-	}{
-		{"/etc/pki/ca-trust/source/anchors", "devmanager.crt", "sudo update-ca-trust"},
-		{"/usr/local/share/ca-certificates", "devmanager.crt", "sudo update-ca-certificates"},
-	}
+var ancorasLinux = []ancora{
+	{"/etc/pki/ca-trust/source/anchors", "sudo update-ca-trust"},        // Fedora, RHEL
+	{"/usr/local/share/ca-certificates", "sudo update-ca-certificates"}, // Debian, Ubuntu
+}
 
-	for _, c := range candidatos {
-		if info, err := os.Stat(c.dir); err != nil || !info.IsDir() {
+func confiancaLinux(ancoras []ancora, cert string) (*confianca, bool) {
+	for _, a := range ancoras {
+		if info, err := os.Stat(a.dir); err != nil || !info.IsDir() {
 			continue
 		}
-		destino := filepath.Join(c.dir, c.nome)
-		return destino, []string{
-			fmt.Sprintf("sudo cp %s %s", cert, destino),
-			c.atualizar,
-		}
+		destino := filepath.Join(a.dir, "devmanager.crt")
+
+		return &confianca{
+			onde: destino,
+			comandos: []string{
+				"sudo cp " + shell.Aspas(cert) + " " + shell.Aspas(destino),
+				a.atualizar,
+			},
+
+			// Compara o CONTEÚDO, não só a existência. Se a CA for
+			// recriada — apagando ~/.local/share/devmanager/ca, por
+			// exemplo —, a âncora antiga continua em /etc com o mesmo
+			// nome. Conferir só a existência diria "feito" enquanto o
+			// navegador recusa todo certificado emitido pela CA nova.
+			instalada: func(context.Context) bool {
+				instalado, err := os.ReadFile(destino)
+				if err != nil {
+					return false
+				}
+				atual, err := os.ReadFile(cert)
+				return err == nil && bytes.Equal(instalado, atual)
+			},
+		}, true
 	}
-	return "", nil
+	return nil, false
+}
+
+// confiancaMacOS usa o Keychain do sistema.
+//
+// -d grava a confiança no domínio de administração, que vale para todos os
+// usuários e é o que o Safari e o Chrome consultam; -r trustRoot marca o
+// certificado como raiz confiável, e não só como presente no chaveiro.
+func confiancaMacOS(cert string) *confianca {
+	return &confianca{
+		onde: "Keychain do sistema",
+		comandos: []string{
+			"sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain " +
+				shell.Aspas(cert),
+		},
+
+		// verify-cert avalia o certificado contra a confiança do sistema, que
+		// é a pergunta certa: não "está no chaveiro?", e sim "o sistema
+		// confia nele?". Uma CA antiga com o mesmo nome não passa, porque o
+		// que se avalia é o arquivo atual.
+		instalada: func(ctx context.Context) bool {
+			ctx, cancelar := context.WithTimeout(ctx, 5*time.Second)
+			defer cancelar()
+			return exec.CommandContext(ctx, "security", "verify-cert", "-c", cert).Run() == nil
+		},
+	}
+}
+
+// CAConfiavel diz se o sistema já confia na CA atual.
+func CAConfiavel(ctx context.Context, cert string) bool {
+	conf, ok := confiancaPara(runtime.GOOS, cert)
+	return ok && conf.instalada(ctx)
+}
+
+// ComandosDeConfianca devolve como confiar na CA neste sistema.
+//
+// É a porta de entrada do `devm proxy ca`, para que ele mostre exatamente os
+// comandos que o `devm setup --apply` executaria.
+func ComandosDeConfianca(cert string) (onde string, comandos []string, ok bool) {
+	conf, ok := confiancaPara(runtime.GOOS, cert)
+	if !ok {
+		return "", nil, false
+	}
+	return conf.onde, conf.comandos, true
 }
 
 // AvisoFirefox explica o armazenamento próprio do navegador.

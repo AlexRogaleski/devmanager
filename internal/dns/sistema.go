@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/AlexRogaleski/devmanager/internal/shell"
 )
 
 // integracao descreve como um sistema operacional encaminha as consultas de
@@ -125,14 +127,14 @@ func (i *integracao) comandosDeInstalacao(endereco, tld string) ([]string, error
 	}
 
 	comandos := []string{
-		"sudo mkdir -p " + aspas(filepath.Dir(i.arquivo)),
+		"sudo mkdir -p " + shell.Aspas(filepath.Dir(i.arquivo)),
 		gravarComSudo(i.arquivo, linhas),
 	}
 	return append(comandos, i.recarregar...), nil
 }
 
 func (i *integracao) comandosDeRemocao() []string {
-	return append([]string{"sudo rm -f " + aspas(i.arquivo)}, i.recarregar...)
+	return append([]string{"sudo rm -f " + shell.Aspas(i.arquivo)}, i.recarregar...)
 }
 
 // gravarComSudo monta UM comando, de uma linha, que grava o arquivo como root.
@@ -148,24 +150,10 @@ func (i *integracao) comandosDeRemocao() []string {
 func gravarComSudo(destino string, linhas []string) string {
 	args := make([]string, len(linhas))
 	for i, l := range linhas {
-		args[i] = aspas(l)
+		args[i] = shell.Aspas(l)
 	}
 	return fmt.Sprintf("printf '%%s\\n' %s | sudo tee %s > /dev/null",
-		strings.Join(args, " "), aspas(destino))
-}
-
-// aspas protege um valor para o shell com aspas simples.
-//
-// Dentro de aspas simples nada é interpretado, exceto a própria aspa, que
-// não pode ser escapada lá dentro: o jeito é fechar as aspas, inserir uma
-// aspa escapada e reabrir. A palavra it's vira:
-//
-//	'it'\''s'
-//
-// (Em bloco de código porque o gofmt reescreve duas aspas simples seguidas
-// como aspas tipográficas no texto de um comentário de documentação.)
-func aspas(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		strings.Join(args, " "), shell.Aspas(destino))
 }
 
 // Estado descreve a situação da resolução de domínios locais.

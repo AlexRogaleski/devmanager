@@ -6,11 +6,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"runtime"
 	"strings"
 
 	"github.com/AlexRogaleski/devmanager/internal/client"
+	"github.com/AlexRogaleski/devmanager/internal/proxy"
+	"github.com/AlexRogaleski/devmanager/internal/setup"
 )
 
 // proxyCmd despacha os subcomandos de `devm proxy`.
@@ -108,10 +109,14 @@ func urlDoDominio(esquema, dominio string, porta int) string {
 // avisoDeQueda explica por que o proxy não está nas portas padrão.
 //
 // A explicação é específica porque os consertos são diferentes: falta de
-// permissão se resolve com setcap; porta ocupada se resolve parando quem está
-// lá. Uma mensagem genérica mandaria metade dos usuários rodar um comando que
-// não resolve nada no caso deles.
+// permissão se resolve configurando o sistema; porta ocupada se resolve
+// parando quem está lá. Uma mensagem genérica mandaria metade dos usuários
+// rodar um comando que não resolve nada no caso deles.
 func avisoDeQueda(motivo string, portaHTTP, portaHTTPS int) string {
+	return avisoDeQuedaEm(runtime.GOOS, motivo, portaHTTP, portaHTTPS)
+}
+
+func avisoDeQuedaEm(goos, motivo string, portaHTTP, portaHTTPS int) string {
 	if motivo == "" {
 		motivo = "as portas padrão não puderam ser usadas"
 	}
@@ -133,35 +138,35 @@ func avisoDeQueda(motivo string, portaHTTP, portaHTTPS int) string {
 
 	// Porta ocupada: o conserto é parar quem está lá, não dar permissão.
 	if strings.Contains(motivo, "ocupada") {
-		return cabecalho + `
+		return cabecalho + fmt.Sprintf(`
 descubra quem está usando a porta com:
 
-  ss -ltnp | grep ':80 '
+  %s
   docker ps --format '{{.Names}}\t{{.Ports}}' | grep ':80'
 
 pare aquele serviço e reinicie o daemon, ou continue usando as portas
 alternativas — os projetos funcionam igual, só com a porta na URL.
+`, quemUsaAPorta(goos, 80))
+	}
+
+	// Falta de permissão: o `devm setup` sabe o conserto de cada sistema.
+	// Esta mensagem recomendava setcap, que foi abandonado justamente
+	// porque toda atualização do binário apaga a capacidade em silêncio.
+	return cabecalho + `
+para usar as portas padrão, rode ` + "`devm setup`" + `, que mostra o ajuste
+de sistema necessário, e depois reinicie o daemon.
 `
+}
+
+// quemUsaAPorta devolve o comando que lista o processo escutando numa porta.
+//
+// O ss é do Linux (iproute2) e não existe no macOS; lá o equivalente é o
+// lsof, que o sistema traz de fábrica.
+func quemUsaAPorta(goos string, porta int) string {
+	if goos == "darwin" {
+		return fmt.Sprintf("lsof -nP -iTCP:%d -sTCP:LISTEN", porta)
 	}
-
-	exe, err := os.Executable()
-	if err != nil {
-		exe = "$(which devm)"
-	}
-	if runtime.GOOS != "linux" {
-		return cabecalho
-	}
-
-	return cabecalho + fmt.Sprintf(`
-para usar as portas padrão, conceda a capacidade ao binário:
-
-  sudo setcap 'cap_net_bind_service=+ep' %s
-
-e reinicie o daemon com `+"`devm daemon stop && devm daemon start`"+`
-
-isso NÃO faz o daemon rodar como root: concede só a permissão de abrir
-portas baixas, e nada mais.
-`, exe)
+	return fmt.Sprintf("ss -ltnp 'sport = :%d'", porta)
 }
 
 // proxyCACmd mostra como confiar na autoridade certificadora local.
@@ -173,55 +178,46 @@ func proxyCACmd(w io.Writer, args []string) error {
 		return err
 	}
 
-	c, err := client.Padrao()
-	if err != nil {
-		return err
+	// O certificado é um arquivo: com o daemon parado ele continua no disco,
+	// e confiar nele antes de subir o daemon é um caminho legítimo. O
+	// daemon só é necessário na primeira vez, porque é ele quem cria a CA.
+	cert := proxy.CertificadoPadrao()
+	if cert == "" {
+		return fmt.Errorf("a CA ainda não existe — ela é criada na primeira vez que o daemon sobe: devm daemon start")
 	}
 
-	info, err := c.Proxy(context.Background())
-	if err != nil {
-		return err
-	}
-	if !info.Ativo {
-		return fmt.Errorf("o proxy não está ativo — veja `devm daemon logs`")
-	}
+	fmt.Fprintf(w, "certificado da CA local:\n  %s\n\n", cert)
 
-	fmt.Fprintf(w, "certificado da CA local:\n  %s\n\n", info.CertificadoCA)
-	fmt.Fprint(w, instrucoesDeConfianca(info.CertificadoCA))
+	// Os comandos continuam aparecendo com a CA já confiável: servem para
+	// outra máquina, ou para reinstalar depois de recriar a CA.
+	if setup.CAConfiavel(context.Background(), cert) {
+		fmt.Fprint(w, "✓ este sistema já confia nela\n\n")
+	}
+	fmt.Fprint(w, instrucoesDeConfianca(cert))
 	return nil
 }
 
-// instrucoesDeConfianca explica como instalar a CA em cada sistema.
+// instrucoesDeConfianca explica como instalar a CA neste sistema.
 //
-// Instalar sozinho seria invasivo: mexer no armazenamento de certificados do
-// sistema é uma mudança de segurança que merece ser deliberada, e cada
-// distribuição faz de um jeito. Imprimimos os comandos exatos e deixamos a
-// decisão com quem vai executá-los.
+// Os comandos vêm do pacote setup, o mesmo que o `devm setup --apply`
+// executa. Havia uma segunda descrição aqui, escrita à parte, e as duas
+// divergiam — esta conhecia o macOS e o setup não.
+//
+// Instalar sozinho seria invasivo: mexer nas autoridades confiáveis do
+// sistema é uma mudança de segurança que merece ser deliberada. Mostramos os
+// comandos exatos e deixamos a decisão com quem vai executá-los.
 func instrucoesDeConfianca(cert string) string {
-	switch runtime.GOOS {
-	case "darwin":
-		return fmt.Sprintf(`para confiar nela no macOS:
-
-  sudo security add-trusted-cert -d -r trustRoot \
-    -k /Library/Keychains/System.keychain %s
-`, cert)
-
-	case "linux":
-		return fmt.Sprintf(`para confiar nela no sistema:
-
-  # Fedora, RHEL e derivados (inclusive Aurora e Kinoite)
-  sudo cp %s /etc/pki/ca-trust/source/anchors/devmanager.crt
-  sudo update-ca-trust
-
-  # Debian e Ubuntu
-  sudo cp %s /usr/local/share/ca-certificates/devmanager.crt
-  sudo update-ca-certificates
-
-o Firefox mantém um armazenamento próprio e ignora o do sistema:
-  Configurações → Privacidade e Segurança → Certificados → Ver certificados
-  → Autoridades → Importar → marque "confiar para identificar sites"
-`, cert, cert)
+	onde, comandos, ok := setup.ComandosDeConfianca(cert)
+	if !ok {
+		return fmt.Sprintf("instale %s como autoridade confiável no seu sistema\n", cert)
 	}
 
-	return fmt.Sprintf("instale %s como autoridade confiável no seu sistema\n", cert)
+	var b strings.Builder
+	fmt.Fprintf(&b, "para confiar nela (%s):\n\n", onde)
+	for _, c := range comandos {
+		fmt.Fprintf(&b, "  %s\n", c)
+	}
+	fmt.Fprintf(&b, "\nou rode `devm setup --apply`, que faz isto e o resto da configuração\n\n%s\n",
+		setup.AvisoFirefox)
+	return b.String()
 }

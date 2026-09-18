@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/AlexRogaleski/devmanager/internal/paths"
 )
 
 // Nomes dos arquivos da autoridade certificadora local.
@@ -49,6 +51,35 @@ type CA struct {
 
 	mu    sync.Mutex
 	cache map[string]*tls.Certificate
+}
+
+// DirPadrao é onde o daemon guarda a CA.
+//
+// Fica aqui, e não no daemon, porque o `devm setup` precisa achar o
+// certificado com o daemon PARADO: é justamente antes de subir o daemon pela
+// primeira vez que alguém costuma configurar a máquina.
+func DirPadrao() (string, error) {
+	dir, err := paths.DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "ca"), nil
+}
+
+// CertificadoPadrao devolve o certificado da CA se ele já existir no disco.
+//
+// Vazio significa que a CA ainda não foi criada — o que acontece na primeira
+// vez que o daemon sobe o proxy.
+func CertificadoPadrao() string {
+	dir, err := DirPadrao()
+	if err != nil {
+		return ""
+	}
+	caminho := filepath.Join(dir, arquivoCertCA)
+	if _, err := os.Stat(caminho); err != nil {
+		return ""
+	}
+	return caminho
 }
 
 // CarregarOuCriar abre a CA do disco, criando-a na primeira vez.
