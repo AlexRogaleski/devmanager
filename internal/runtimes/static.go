@@ -23,18 +23,25 @@ const URLPadrao = "https://dl.static-php.dev/static-php-cli"
 
 // VariantePadrao é o conjunto de extensões usado quando nada é especificado.
 //
-// A escolha é deliberada e tem um custo conhecido. Medindo os builds reais:
+// Medindo os builds reais com PDO::getAvailableDrivers():
 //
-//	common (12 MB)  tem pdo_sqlite e pdo_pgsql; NÃO tem intl, readline,
-//	                sodium nem opcache
-//	bulk   (30 MB)  tem intl, readline, sodium, opcache, imagick, swoole;
-//	                NÃO tem pdo_sqlite nem pdo_pgsql
+//	common   (12 MB)  drivers mysql, pgsql e sqlite; SEM intl, readline
+//	                  nem opcache
+//	bulk     (31 MB)  os mesmos drivers, MAIS intl, readline, opcache,
+//	                  sodium, imagick e swoole — e totalmente estático
+//	gnu-bulk (114 MB) idêntico ao bulk em extensões, mas ligado à glibc
 //
-// Um Laravel novo usa SQLite por padrão, então um PHP sem pdo_sqlite quebra
-// no primeiro `artisan migrate`. Driver de banco não é negociável; intl e
-// readline são perdas reais, mas contornáveis. Daí o common como padrão —
-// e a variante exposta como campo, para quem precisar do outro lado.
-const VariantePadrao = "common"
+// O bulk é estritamente melhor que o common: mesmos drivers de banco e mais
+// 16 extensões, por 19 MB a mais. O gnu-bulk não traz nada além e custa 83 MB
+// a mais, além de deixar de ser estático — o que descarta a portabilidade que
+// motivou a escolha por binário estático.
+//
+// Nota sobre como medir: `php -m` NÃO lista os drivers compilados dentro da
+// extensão PDO. Uma leitura apressada dessa saída sugere que o bulk não tem
+// pdo_pgsql nem pdo_sqlite, e a conclusão é falsa —
+// PDO::getAvailableDrivers() mostra os três. Esse engano custou a escolha
+// errada de padrão durante um tempo.
+const VariantePadrao = "bulk"
 
 // StaticProvider instala PHPs estáticos isolados do sistema.
 //

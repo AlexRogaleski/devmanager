@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
@@ -67,29 +68,44 @@ func mostrarExtensoes(ctx context.Context, w io.Writer, rt runtimes.Runtime) err
 	for _, l := range faltando {
 		fmt.Fprintln(w, l)
 	}
-	fmt.Fprintln(w, "\nDEVMANAGER_PHP_VARIANT=bulk troca o conjunto de extensões")
-	fmt.Fprintln(w, "(bulk tem intl/readline/opcache, mas não tem pdo_sqlite nem pdo_pgsql)")
+	fmt.Fprintln(w, "\nDEVMANAGER_PHP_VARIANT troca o conjunto de extensões:")
+	fmt.Fprintln(w, "  bulk      o padrão: drivers de banco, intl, readline, opcache")
+	fmt.Fprintln(w, "  gnu-bulk  o mesmo conjunto, ligado à glibc (114 MB)")
+	fmt.Fprintln(w, "  common    só o essencial, sem intl nem readline (12 MB)")
 	return nil
 }
 
-// extensoesDe devolve as extensões compiladas num binário PHP.
+// extensoesDe devolve o que um binário PHP realmente oferece.
+//
+// Perguntamos ao próprio PHP em vez de parsear `php -m`, e a diferença não é
+// estilo: o `php -m` NÃO lista os drivers compilados dentro da extensão PDO.
+// Lendo aquela saída, um build com pdo_pgsql e pdo_sqlite embutidos parece
+// não tê-los — conclusão falsa que já levou à escolha errada de variante
+// padrão neste projeto.
+//
+// PDO::getAvailableDrivers() é a fonte correta para drivers de banco;
+// get_loaded_extensions() para o resto.
 func extensoesDe(ctx context.Context, bin string) (map[string]bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	saida, err := exec.CommandContext(ctx, bin, "-n", "-m").Output()
+	const script = `$e = array_map("strtolower", get_loaded_extensions());
+foreach (class_exists("PDO") ? PDO::getAvailableDrivers() : [] as $d) { $e[] = "pdo_" . $d; }
+echo json_encode(array_values(array_unique($e)));`
+
+	saida, err := exec.CommandContext(ctx, bin, "-n", "-r", script).Output()
 	if err != nil {
 		return nil, err
 	}
 
-	presentes := map[string]bool{}
-	for _, linha := range strings.Split(string(saida), "\n") {
-		linha = strings.TrimSpace(linha)
-		// Pula os cabeçalhos de seção como "[PHP Modules]".
-		if linha == "" || strings.HasPrefix(linha, "[") {
-			continue
-		}
-		presentes[strings.ToLower(linha)] = true
+	var lista []string
+	if err := json.Unmarshal(saida, &lista); err != nil {
+		return nil, fmt.Errorf("lendo a lista de extensões: %w", err)
+	}
+
+	presentes := make(map[string]bool, len(lista))
+	for _, e := range lista {
+		presentes[strings.ToLower(e)] = true
 	}
 	return presentes, nil
 }

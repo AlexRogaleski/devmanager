@@ -245,13 +245,13 @@ func TestURLDoBuild(t *testing.T) {
 	p := &StaticProvider{BaseURL: "https://exemplo.test/spc"}
 	so, arch := plataforma()
 
-	esperado := fmt.Sprintf("https://exemplo.test/spc/common/php-8.3.32-cli-%s-%s.tar.gz", so, arch)
+	esperado := fmt.Sprintf("https://exemplo.test/spc/%s/php-8.3.32-cli-%s-%s.tar.gz", VariantePadrao, so, arch)
 	if got := p.URLDoBuild(semver.MustParse("8.3.32")); got != esperado {
 		t.Errorf("URL = %q, esperava %q", got, esperado)
 	}
 
-	p.Variant = "bulk"
-	if got := p.URLDoBuild(semver.MustParse("8.3.32")); !strings.Contains(got, "/bulk/") {
+	p.Variant = "common"
+	if got := p.URLDoBuild(semver.MustParse("8.3.32")); !strings.Contains(got, "/common/") {
 		t.Errorf("a variante não foi aplicada: %q", got)
 	}
 }
