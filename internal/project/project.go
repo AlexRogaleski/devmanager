@@ -51,6 +51,10 @@ type Project struct {
 
 	// Sinais de prontidão: um projeto recém-clonado tem artisan, mas não tem
 	// vendor nem .env. É essa diferença que o Dev Manager vai resolver sozinho.
+	// NodeConstraint vem do .nvmrc ou de engines.node no package.json.
+	NodeConstraint string `json:"node_constraint,omitempty"`
+	NodeOrigem     Origem `json:"node_origin,omitempty"`
+
 	HasArtisan bool `json:"has_artisan"`
 	HasVendor  bool `json:"has_vendor"`
 	HasEnv     bool `json:"has_env"`
@@ -70,6 +74,8 @@ const (
 	OrigemNenhuma  Origem = ""
 	OrigemComposer Origem = "composer.json"
 	OrigemConfig   Origem = "devmanager.yaml"
+	OrigemNvmrc    Origem = ".nvmrc"
+	OrigemPackage  Origem = "package.json"
 )
 
 // PHPRequirement devolve a exigência de PHP efetiva e de onde ela veio.
@@ -84,6 +90,22 @@ func (p *Project) PHPRequirement() (string, Origem) {
 	}
 	if p.PHPConstraint != "" {
 		return p.PHPConstraint, OrigemComposer
+	}
+	return "", OrigemNenhuma
+}
+
+// NodeRequirement devolve a exigência de Node efetiva e de onde ela veio.
+//
+// Mesma precedência do PHP: o devmanager.yaml vence a detecção. Na detecção,
+// o .nvmrc vem antes do engines.node porque é mais específico — o primeiro
+// diz "esta máquina usa esta versão", o segundo diz "este pacote suporta
+// estas versões", e são perguntas diferentes.
+func (p *Project) NodeRequirement() (string, Origem) {
+	if p.Config != nil && p.Config.Node != "" {
+		return p.Config.Node, OrigemConfig
+	}
+	if p.NodeConstraint != "" {
+		return p.NodeConstraint, p.NodeOrigem
 	}
 	return "", OrigemNenhuma
 }

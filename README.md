@@ -75,6 +75,7 @@ Crie um `devmanager.yaml` na raiz e versione junto com o código:
 
 ```yaml
 php: "8.4"
+node: "22"
 
 services:
   - mysql:8.4
@@ -145,12 +146,37 @@ devm php which "^8.2"
 Os binários vêm do [static-php-cli](https://github.com/crazywhalecc/static-php-cli)
 e ficam em `~/.local/share/devmanager/runtimes/`. Nenhum toca no PHP do sistema.
 
-> O build padrão (`common`) tem `pdo_sqlite` e `pdo_pgsql`, mas **não** tem
-> `intl` nem `readline` — o segundo significa que `artisan tinker` interativo
-> não funciona. `DEVMANAGER_PHP_VARIANT=bulk` troca o conjunto, ganhando
-> `intl`, `readline` e `opcache` e perdendo os drivers de SQLite e PostgreSQL.
-> Nenhum build publicado é completo para Laravel; `devm php install` lista o
-> que falta em cada um.
+O build padrão é o `bulk`: drivers de MySQL, PostgreSQL e SQLite, mais `intl`,
+`readline`, `opcache`, `sodium` e `imagick`. Totalmente estático, 31 MB.
+`DEVMANAGER_PHP_VARIANT` troca o conjunto (`common` é menor e sem `intl`;
+`gnu-bulk` tem o mesmo do `bulk` mas ligado à glibc).
+
+> **Cuidado ao inspecionar extensões:** `php -m` **não** lista os drivers
+> compilados dentro da extensão PDO. No `bulk` eles entram pelos
+> `swoole-hook-pgsql` e `swoole-hook-sqlite`, e a saída daquele comando sugere
+> falsamente que não existem. `PDO::getAvailableDrivers()` é a fonte correta —
+> esse engano custou uma escolha errada de variante padrão neste projeto.
+
+### Node
+
+```sh
+devm node list       # instalados, incluindo os do seu nvm
+devm node available  # instaláveis
+devm node install 22
+devm node use 22     # fixa no devmanager.yaml
+devm node use --clear
+```
+
+Encontra o que você já tem — **nvm**, fnm, volta e o node do PATH — antes de
+oferecer download. Quem já usa nvm não precisa baixar nada.
+
+Sem versão declarada, o Dev Manager **não** gerencia o Node: o `npm` do
+sistema continua valendo. Isso é deliberado — impor uma versão a quem não
+pediu criaria um shim sequestrando o `npm` sem motivo. A detecção lê, nesta
+ordem: `devmanager.yaml`, `.nvmrc`, `engines.node` do `package.json`.
+
+Quando gerenciado, o shim expõe `node`, `npm` e `npx` juntos: um `npm run dev`
+que caísse no npm do sistema rodaria com a versão errada de Node por baixo.
 
 ### Editores
 
@@ -235,7 +261,5 @@ tomada — não o que a linha faz.
   `systemd-resolved`.
 - **Porta 80 disputada.** Se outro servidor já a ocupa, o proxy cai para 8080
   e avisa. HTTP e HTTPS caem de forma independente.
-- **`artisan tinker` interativo** não funciona no build `common` do PHP, por
-  falta de `readline`. O `--execute` funciona.
 - **Reiniciar o daemon derruba todos os ambientes.** Eles não voltam sozinhos;
   `devm start -d <projeto>` religa.

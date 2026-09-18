@@ -24,6 +24,87 @@ const modelo = `# Dev Manager — configuração deste projeto.
 php: "%s"
 `
 
+// SetChave grava (ou remove, se valor vazio) uma chave escalar.
+//
+// Generaliza o que antes era exclusivo do php. A edição continua sendo pelo
+// yaml.Node, preservando comentários e demais chaves.
+func SetChave(dir, chave, valor string) error {
+	if valor == "" {
+		return removerChaveDoArquivo(dir, chave)
+	}
+
+	caminho := Path(dir)
+
+	dados, err := os.ReadFile(caminho)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("lendo %s: %w", caminho, err)
+		}
+		// Arquivo novo com só esta chave: o modelo comentado é do php, então
+		// para outras chaves geramos o mínimo.
+		if chave == "php" {
+			return escreverAtomico(caminho, []byte(fmt.Sprintf(modelo, valor)))
+		}
+		return escreverAtomico(caminho, []byte(fmt.Sprintf("%s: %q\n", chave, valor)))
+	}
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal(dados, &doc); err != nil {
+		return fmt.Errorf("%s inválido: %w", caminho, err)
+	}
+
+	mapa, err := mapaRaiz(&doc)
+	if err != nil {
+		return fmt.Errorf("%s: %w", caminho, err)
+	}
+	definirEscalar(mapa, chave, valor)
+
+	saida, err := serializar(&doc)
+	if err != nil {
+		return err
+	}
+	return escreverAtomico(caminho, saida)
+}
+
+// removerChaveDoArquivo tira uma chave, apagando o arquivo se ele ficar vazio.
+func removerChaveDoArquivo(dir, chave string) error {
+	caminho := Path(dir)
+
+	dados, err := os.ReadFile(caminho)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("lendo %s: %w", caminho, err)
+	}
+
+	var doc yaml.Node
+	if err := yaml.Unmarshal(dados, &doc); err != nil {
+		return fmt.Errorf("%s inválido: %w", caminho, err)
+	}
+
+	mapa, err := mapaRaiz(&doc)
+	if err != nil {
+		return fmt.Errorf("%s: %w", caminho, err)
+	}
+	if !removerChave(mapa, chave) {
+		return nil
+	}
+
+	if len(mapa.Content) == 0 {
+		if err := os.Remove(caminho); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removendo %s: %w", caminho, err)
+		}
+		return nil
+	}
+
+	saida, err := serializar(&doc)
+	if err != nil {
+		return err
+	}
+	return escreverAtomico(caminho, saida)
+}
+
 // SetPHP fixa a versão de PHP do projeto, preservando o resto do arquivo.
 //
 // Se o arquivo não existir, é criado a partir do modelo comentado. Se existir,

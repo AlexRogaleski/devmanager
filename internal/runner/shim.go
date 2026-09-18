@@ -26,19 +26,60 @@ import (
 //
 // A função é idempotente: chamar várias vezes com o mesmo runtime não muda
 // nada, e chamar com um runtime diferente reaponta o link.
-func EnsureShim(shimDir string, rt runtimes.Runtime) (string, error) {
+// comandosGerenciados lista o que o shim pode criar para cada linguagem.
+//
+// Existe para saber o que REMOVER. Um shim que só acrescenta links mantém
+// para sempre o que já colocou: desfixar a versão de Node num projeto
+// deixaria o link antigo no lugar, e o projeto continuaria usando a versão
+// que a pessoa acabou de remover da configuração — sem nenhum sinal do
+// motivo.
+//
+// O composer não entra aqui de propósito: ele é gerenciado à parte, por
+// EnsureComposerShim, e não deve ser apagado por esta limpeza.
+var comandosGerenciados = map[string][]string{
+	"php":  {"php"},
+	"node": {"node", "npm", "npx"},
+}
+
+func EnsureShim(shimDir string, runtimesDoProjeto ...runtimes.Runtime) (string, error) {
 	// MkdirAll não reclama se o diretório já existe — é o mkdir -p.
 	// O modo 0o755 dá leitura e execução a todos, escrita só ao dono.
 	if err := os.MkdirAll(shimDir, 0o755); err != nil {
 		return "", fmt.Errorf("criando shim em %s: %w", shimDir, err)
 	}
 
-	link := filepath.Join(shimDir, "php")
+	presentes := make(map[string]bool, len(runtimesDoProjeto))
+
+	for _, rt := range runtimesDoProjeto {
+		presentes[rt.Language] = true
+		for nome, alvo := range rt.Executaveis() {
+			if err := ligar(shimDir, nome, alvo); err != nil {
+				return "", err
+			}
+		}
+	}
+
+	// Remove o que sobrou de uma configuração anterior.
+	for linguagem, comandos := range comandosGerenciados {
+		if presentes[linguagem] {
+			continue
+		}
+		for _, nome := range comandos {
+			_ = os.Remove(filepath.Join(shimDir, nome))
+		}
+	}
+
+	return shimDir, nil
+}
+
+// ligar cria ou reaponta um link do shim.
+func ligar(shimDir, nome, destino string) error {
+	link := filepath.Join(shimDir, nome)
 
 	// Se o link já aponta para o lugar certo, não há nada a fazer.
 	// Readlink lê o ALVO do link sem segui-lo, que é o que queremos comparar.
-	if alvo, err := os.Readlink(link); err == nil && alvo == rt.Bin {
-		return shimDir, nil
+	if alvo, err := os.Readlink(link); err == nil && alvo == destino {
+		return nil
 	}
 
 	// Symlink falha se o destino já existe, então removemos antes.
@@ -46,10 +87,10 @@ func EnsureShim(shimDir string, rt runtimes.Runtime) (string, error) {
 	// propósito: "já não existia" é exatamente o estado que queremos.
 	_ = os.Remove(link)
 
-	if err := os.Symlink(rt.Bin, link); err != nil {
-		return "", fmt.Errorf("apontando %s para %s: %w", link, rt.Bin, err)
+	if err := os.Symlink(destino, link); err != nil {
+		return fmt.Errorf("apontando %s para %s: %w", link, destino, err)
 	}
-	return shimDir, nil
+	return nil
 }
 
 // PHPPath devolve o caminho do interpretador dentro de um shim.

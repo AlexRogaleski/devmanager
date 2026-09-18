@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/AlexRogaleski/devmanager/internal/environment"
-	"github.com/AlexRogaleski/devmanager/internal/paths"
 	"github.com/AlexRogaleski/devmanager/internal/project"
 	"github.com/AlexRogaleski/devmanager/internal/runner"
 	"github.com/AlexRogaleski/devmanager/internal/runtimes"
@@ -95,16 +94,15 @@ func ambienteDoProjeto() (*project.Project, *runner.Runner, error) {
 		return nil, nil, err
 	}
 
-	shim, err := paths.ShimDir(p.Path)
+	// environment.NovoRunner, e não um Runner montado à mão: é ele que
+	// acrescenta o Node ao shim quando o projeto declara uma versão.
+	// Construir o Runner direto aqui fazia o `devm node use` gravar a
+	// configuração sem efeito nenhum — o npm continuava vindo do sistema.
+	r, err := environment.NovoRunner(p, rt)
 	if err != nil {
 		return nil, nil, err
 	}
-
-	return p, &runner.Runner{
-		Runtime: rt,
-		Dir:     p.Path,
-		ShimDir: shim,
-	}, nil
+	return p, r, nil
 }
 
 // localizarProjeto acha o projeto SEM resolver o runtime.

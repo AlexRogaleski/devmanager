@@ -27,10 +27,15 @@ import (
 // recebem os arquivos do terminal; nos testes, buffers em memória.
 type Runner struct {
 	Runtime runtimes.Runtime // o PHP escolhido para este projeto
-	Dir     string           // diretório de trabalho do comando
-	Stdin   io.Reader
-	Stdout  io.Writer
-	Stderr  io.Writer
+
+	// Extras são outros runtimes que o projeto usa, como o Node. Eles entram
+	// no mesmo shim, então um `npm run dev` disparado por qualquer processo
+	// encontra a versão certa.
+	Extras []runtimes.Runtime
+	Dir    string // diretório de trabalho do comando
+	Stdin  io.Reader
+	Stdout io.Writer
+	Stderr io.Writer
 
 	// Env sobrescreve o ambiente. Vazio usa o do processo atual.
 	Env []string
@@ -162,8 +167,10 @@ func (r *Runner) ambiente(shim string) []string {
 // óbvio no ponto da chamada: no defer já se vê o que será desfeito. Para o
 // shim persistente do projeto, a limpeza é um no-op — ele deve sobreviver.
 func (r *Runner) prepararShim() (dir string, limpar func(), err error) {
+	todos := append([]runtimes.Runtime{r.Runtime}, r.Extras...)
+
 	if r.ShimDir != "" {
-		dir, err := EnsureShim(r.ShimDir, r.Runtime)
+		dir, err := EnsureShim(r.ShimDir, todos...)
 		return dir, func() {}, err
 	}
 
@@ -173,7 +180,7 @@ func (r *Runner) prepararShim() (dir string, limpar func(), err error) {
 	}
 	limpar = func() { os.RemoveAll(dir) }
 
-	if _, err := EnsureShim(dir, r.Runtime); err != nil {
+	if _, err := EnsureShim(dir, todos...); err != nil {
 		limpar()
 		return "", nil, err
 	}

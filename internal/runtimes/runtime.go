@@ -16,10 +16,28 @@ import (
 
 // Runtime é uma instalação concreta e executável de uma linguagem.
 type Runtime struct {
-	Language string         `json:"language"` // "php", futuramente "node"
+	Language string         `json:"language"` // "php", "node"
 	Version  semver.Version `json:"version"`
-	Bin      string         `json:"bin"`    // caminho absoluto do executável
+	Bin      string         `json:"bin"`    // caminho absoluto do executável principal
 	Source   string         `json:"source"` // qual Provider forneceu
+
+	// Comandos são todos os executáveis que este runtime oferece, por nome.
+	//
+	// O PHP fornece um só; o Node fornece node, npm e npx. O shim precisa
+	// expor TODOS, senão um `npm run dev` cairia no npm do sistema — com a
+	// versão errada de Node por baixo, que é exatamente o problema que o
+	// gerenciamento de runtime existe para resolver.
+	//
+	// Vazio significa "só o Bin, sob o nome da linguagem".
+	Comandos map[string]string `json:"commands,omitempty"`
+}
+
+// Executaveis devolve os comandos que o shim deve expor.
+func (r Runtime) Executaveis() map[string]string {
+	if len(r.Comandos) > 0 {
+		return r.Comandos
+	}
+	return map[string]string{r.Language: r.Bin}
 }
 
 func (r Runtime) String() string {

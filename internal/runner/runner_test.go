@@ -289,3 +289,60 @@ func TestEnsureComposerShim(t *testing.T) {
 		t.Fatalf("segunda chamada falhou: %v", err)
 	}
 }
+
+// Regressão: o shim só ACRESCENTAVA links. Desfixar a versão de Node deixava
+// o link antigo no lugar, e o projeto continuava usando a versão que a pessoa
+// acabou de remover da configuração — sem nenhum sinal do motivo.
+func TestShimRemoveLinksObsoletos(t *testing.T) {
+	rt := phpFalso(t)
+	shimDir := filepath.Join(t.TempDir(), "shim")
+
+	node := runtimes.Runtime{
+		Language: "node",
+		Version:  semver.MustParse("22.11.0"),
+		Bin:      rt.Bin, // qualquer executável serve para o teste
+		Comandos: map[string]string{"node": rt.Bin, "npm": rt.Bin, "npx": rt.Bin},
+	}
+
+	if _, err := EnsureShim(shimDir, rt, node); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"php", "node", "npm", "npx"} {
+		if _, err := os.Lstat(filepath.Join(shimDir, n)); err != nil {
+			t.Fatalf("link %q não foi criado: %v", n, err)
+		}
+	}
+
+	// Agora sem o Node: os três links dele têm que sumir.
+	if _, err := EnsureShim(shimDir, rt); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"node", "npm", "npx"} {
+		if _, err := os.Lstat(filepath.Join(shimDir, n)); err == nil {
+			t.Errorf("link obsoleto %q permaneceu", n)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(shimDir, "php")); err != nil {
+		t.Errorf("o php não deveria ter sido removido: %v", err)
+	}
+}
+
+// O composer é gerenciado à parte e não pode ser apagado pela limpeza.
+func TestShimNaoRemoveOComposer(t *testing.T) {
+	rt := phpFalso(t)
+	shimDir := filepath.Join(t.TempDir(), "shim")
+
+	if _, err := EnsureShim(shimDir, rt); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureComposerShim(shimDir, rt.Bin, "/x/composer.phar"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := EnsureShim(shimDir, rt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(shimDir, "composer")); err != nil {
+		t.Errorf("o composer foi apagado pela limpeza: %v", err)
+	}
+}

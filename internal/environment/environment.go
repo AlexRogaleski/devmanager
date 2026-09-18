@@ -53,6 +53,53 @@ func Runtimes() *runtimes.Manager {
 	return runtimes.NewManager(providers...)
 }
 
+// NodeRuntimes monta a cadeia de Providers de Node.
+//
+// A ordem espelha a do PHP: o que o Dev Manager baixou vem primeiro, e o que
+// já existe na máquina — nvm, fnm, volta, PATH — serve de rede de segurança.
+// Diferente do PHP, porém, a rede de segurança aqui costuma bastar: quase
+// todo desenvolvedor já tem um nvm com as versões que usa.
+func NodeRuntimes() *runtimes.Manager {
+	var providers []runtimes.Provider
+
+	if dir, err := paths.RuntimesDir(); err == nil {
+		providers = append(providers, &runtimes.NodeOficialProvider{
+			Dir: filepath.Join(dir, "node"),
+		})
+	}
+	providers = append(providers, &runtimes.NodeSystemProvider{
+		ExtraDirs: filepath.SplitList(os.Getenv("DEVMANAGER_NODE_DIRS")),
+	})
+
+	return runtimes.NewManager(providers...)
+}
+
+// ResolverNode escolhe o Node do projeto.
+//
+// Sem exigência declarada, devolve ok=false em vez de escolher a mais nova.
+// A diferença de postura em relação ao PHP é deliberada: o PHP é obrigatório
+// para rodar um projeto Laravel, então um palpite razoável é melhor que
+// falhar. O Node é opcional — muitos projetos não têm frontend — e impor uma
+// versão a quem não pediu criaria um shim que sequestra o `npm` do sistema
+// sem motivo.
+func ResolverNode(ctx context.Context, p *project.Project) (runtimes.Runtime, bool) {
+	exigencia, _ := p.NodeRequirement()
+	if exigencia == "" {
+		return runtimes.Runtime{}, false
+	}
+
+	c, err := semver.ParseConstraint(exigencia)
+	if err != nil {
+		return runtimes.Runtime{}, false
+	}
+
+	rt, err := NodeRuntimes().Resolve(ctx, "node", c)
+	if err != nil {
+		return runtimes.Runtime{}, false
+	}
+	return rt, true
+}
+
 // ResolverPHP escolhe o interpretador do projeto.
 //
 // Sem exigência declarada, cai para a versão mais nova disponível: é a
@@ -73,12 +120,21 @@ func ResolverPHP(ctx context.Context, p *project.Project) (runtimes.Runtime, err
 }
 
 // NovoRunner monta o executor do projeto, apontando para o shim persistente.
+//
+// O Node entra no mesmo shim quando o projeto declara uma versão. Sem
+// declaração, não entra — e o `npm` do sistema continua valendo, que é o
+// comportamento esperado por quem nunca pediu gerenciamento de Node.
 func NovoRunner(p *project.Project, rt runtimes.Runtime) (*runner.Runner, error) {
 	shim, err := paths.ShimDir(p.Path)
 	if err != nil {
 		return nil, err
 	}
-	return &runner.Runner{Runtime: rt, Dir: p.Path, ShimDir: shim}, nil
+
+	r := &runner.Runner{Runtime: rt, Dir: p.Path, ShimDir: shim}
+	if node, ok := ResolverNode(context.Background(), p); ok {
+		r.Extras = append(r.Extras, node)
+	}
+	return r, nil
 }
 
 // Processos decide o que subir para este projeto.

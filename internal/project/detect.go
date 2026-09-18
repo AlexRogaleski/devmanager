@@ -72,6 +72,8 @@ func Detect(dir string) (*Project, error) {
 		return nil, err
 	}
 
+	lerExigenciaDeNode(p, abs)
+
 	// O devmanager.yaml é lido por último porque é ele quem tem a palavra
 	// final: o que estiver aqui sobrepõe tudo que foi detectado acima.
 	cfg, err := config.Load(abs)

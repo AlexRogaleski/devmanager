@@ -267,3 +267,88 @@ func TestFindForaDeProjeto(t *testing.T) {
 		t.Errorf("erro = %T, esperava *NoProjectError", err)
 	}
 }
+
+// A exigência de Node segue a mesma precedência do PHP, e na detecção o
+// .nvmrc vem antes do engines.node: o primeiro diz "esta máquina usa esta
+// versão", o segundo diz "este pacote suporta estas versões".
+func TestNodeRequirementPrecedencia(t *testing.T) {
+	casos := []struct {
+		nome     string
+		arquivos map[string]string
+		querReq  string
+		querOrig Origem
+	}{
+		{
+			nome: "só .nvmrc",
+			arquivos: map[string]string{
+				"composer.json": `{"require":{}}`,
+				".nvmrc":        "22\n",
+			},
+			querReq:  "22",
+			querOrig: OrigemNvmrc,
+		},
+		{
+			nome: ".nvmrc vence engines.node",
+			arquivos: map[string]string{
+				"composer.json": `{"require":{}}`,
+				".nvmrc":        "v20.18.0\n",
+				"package.json":  `{"engines":{"node":"^22"}}`,
+			},
+			querReq:  "v20.18.0",
+			querOrig: OrigemNvmrc,
+		},
+		{
+			nome: "só engines.node",
+			arquivos: map[string]string{
+				"composer.json": `{"require":{}}`,
+				"package.json":  `{"engines":{"node":">=20"}}`,
+			},
+			querReq:  ">=20",
+			querOrig: OrigemPackage,
+		},
+		{
+			nome: "devmanager.yaml vence tudo",
+			arquivos: map[string]string{
+				"composer.json":   `{"require":{}}`,
+				".nvmrc":          "18\n",
+				"package.json":    `{"engines":{"node":"^20"}}`,
+				"devmanager.yaml": "node: \"22\"\n",
+			},
+			querReq:  "22",
+			querOrig: OrigemConfig,
+		},
+		{
+			nome: "apelido do nvm é ignorado",
+			arquivos: map[string]string{
+				"composer.json": `{"require":{}}`,
+				// "lts/*" não é versão: resolvê-lo exigiria consultar a lista
+				// de releases, e o resultado mudaria com o tempo sem o
+				// projeto ter mudado.
+				".nvmrc": "lts/*\n",
+			},
+			querOrig: OrigemNenhuma,
+		},
+		{
+			nome:     "nada declarado",
+			arquivos: map[string]string{"composer.json": `{"require":{}}`},
+			querOrig: OrigemNenhuma,
+		},
+	}
+
+	for _, c := range casos {
+		t.Run(c.nome, func(t *testing.T) {
+			p, err := Detect(projetoFalso(t, c.arquivos))
+			if err != nil {
+				t.Fatalf("Detect falhou: %v", err)
+			}
+
+			req, origem := p.NodeRequirement()
+			if req != c.querReq {
+				t.Errorf("exigência = %q, esperava %q", req, c.querReq)
+			}
+			if origem != c.querOrig {
+				t.Errorf("origem = %q, esperava %q", origem, c.querOrig)
+			}
+		})
+	}
+}

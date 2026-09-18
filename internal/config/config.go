@@ -30,6 +30,10 @@ type Config struct {
 	// Composer: "8.3" (qualquer 8.3.x), "8.3.15" (exata), "^8.3" (faixa).
 	PHP string `yaml:"php,omitempty"`
 
+	// Node fixa a versão de Node do projeto, na mesma gramática do PHP:
+	// "22" (qualquer 22.x), "22.11.0" (exata), "^22" (faixa).
+	Node string `yaml:"node,omitempty"`
+
 	// Campos abaixo ainda não são usados, mas já definem o formato para os
 	// próximos passos. Declará-los agora evita quebrar arquivos existentes
 	// quando as features chegarem.

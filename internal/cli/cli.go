@@ -40,6 +40,8 @@ func Run(args []string, stdio IO) error {
 		return detectCmd(stdio.Out, resto)
 	case "php":
 		return phpCmd(stdio.Out, resto)
+	case "node":
+		return nodeCmd(stdio, resto)
 
 	// Estes três repassam os argumentos VERBATIM para o processo filho.
 	// Nenhuma flag é interpretada pelo devm, senão `devm artisan migrate
@@ -138,6 +140,8 @@ Runtimes:
   php use    fixa a versão de PHP do projeto no devmanager.yaml
   php avail  lista versões que podem ser instaladas
   php install  baixa uma versão de PHP isolada do sistema
+  node list    lista as versões de Node disponíveis (inclusive do nvm)
+  node use     fixa a versão de Node do projeto
 
 Daemon:
   daemon status    mostra se o daemon está rodando
