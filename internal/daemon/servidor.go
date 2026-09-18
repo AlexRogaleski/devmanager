@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/AlexRogaleski/devmanager/internal/paths"
+	"github.com/AlexRogaleski/devmanager/internal/proxy"
 	"github.com/AlexRogaleski/devmanager/internal/registry"
 )
 
@@ -32,6 +33,11 @@ type Servidor struct {
 
 	mu        sync.Mutex
 	ambientes map[string]*ambiente
+
+	// tabela é compartilhada com o proxy: o daemon escreve as rotas quando
+	// um ambiente sobe, e o proxy as lê a cada requisição.
+	tabela *proxy.Tabela
+	proxy  *proxy.Proxy
 
 	desdeQue time.Time
 	ln       net.Listener
@@ -67,7 +73,56 @@ func NovoServidor(socket, versao string, saida io.Writer) *Servidor {
 		Versao:    versao,
 		Saida:     saida,
 		ambientes: make(map[string]*ambiente),
+		tabela:    proxy.NovaTabela(),
 		desdeQue:  time.Now(),
+	}
+}
+
+// iniciarProxy sobe o proxy de domínios locais.
+//
+// Falhar aqui NÃO derruba o daemon: a porta 80 pode estar ocupada por um
+// Apache do sistema, e perder a supervisão de processos por causa disso seria
+// desproporcional. O proxy é um recurso a mais, não o coração da ferramenta.
+func (s *Servidor) iniciarProxy(ctx context.Context) {
+	dir, err := paths.DataDir()
+	if err != nil {
+		s.logf("proxy indisponível: %v", err)
+		return
+	}
+
+	ca, err := proxy.CarregarOuCriar(filepath.Join(dir, "ca"))
+	if err != nil {
+		s.logf("proxy indisponível: %v", err)
+		return
+	}
+
+	p := proxy.Novo(s.tabela, ca, s.Saida)
+	if err := p.Escutar(); err != nil {
+		s.logf("proxy indisponível: %v", err)
+		return
+	}
+
+	s.proxy = p
+	go func() {
+		if err := p.Servir(ctx); err != nil {
+			s.logf("proxy encerrado com erro: %v", err)
+		}
+	}()
+}
+
+// InfoProxy descreve o estado do proxy para a API.
+func (s *Servidor) InfoProxy() Proxy {
+	if s.proxy == nil {
+		return Proxy{Ativo: false}
+	}
+
+	return Proxy{
+		Ativo:         true,
+		PortaHTTP:     s.proxy.PortaHTTP,
+		PortaHTTPS:    s.proxy.PortaHTTPS,
+		SemPrivilegio: s.proxy.SemPrivilegio,
+		CertificadoCA: s.proxy.CA.CaminhoDoCertificado(),
+		Dominios:      s.tabela.Dominios(),
 	}
 }
 
@@ -115,6 +170,8 @@ func (s *Servidor) Servir(ctx context.Context) error {
 		return errors.New("Escutar precisa ser chamado antes de Servir")
 	}
 
+	s.iniciarProxy(ctx)
+
 	s.http = &http.Server{Handler: s.rotas()}
 
 	// Uma goroutine espera o cancelamento para encerrar o servidor: o
@@ -161,6 +218,10 @@ func (s *Servidor) Encerrar() error {
 			s.logf("aviso: %s não encerrou a tempo", amb.nome)
 		}
 		amb.anel.Fechar()
+	}
+
+	if s.proxy != nil {
+		_ = s.proxy.Encerrar()
 	}
 
 	if s.http != nil {

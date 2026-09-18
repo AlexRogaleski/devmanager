@@ -168,6 +168,14 @@ func (s *Servidor) subir(ctx context.Context, caminho string, nome string, pedid
 		err := sup.Run(ctxAmb)
 		amb.finalizar(err)
 
+		// A rota sai da tabela quando o ambiente cai SOZINHO, não só no
+		// stop explícito. Sem isso, o domínio continuaria anunciado e todo
+		// acesso devolveria 502 — com o agravante de o `devm proxy status`
+		// listar um domínio que não atende ninguém.
+		if amb.dominio != "" {
+			s.tabela.Remover(amb.dominio)
+		}
+
 		if err != nil {
 			registrar("ambiente encerrado: %v", err)
 		} else {

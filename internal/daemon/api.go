@@ -74,6 +74,16 @@ func (a Ambiente) Rodando() bool {
 	return false
 }
 
+// Proxy descreve o proxy de domínios locais.
+type Proxy struct {
+	Ativo         bool     `json:"active"`
+	PortaHTTP     int      `json:"http_port,omitempty"`
+	PortaHTTPS    int      `json:"https_port,omitempty"`
+	SemPrivilegio bool     `json:"unprivileged,omitempty"`
+	CertificadoCA string   `json:"ca_cert,omitempty"`
+	Dominios      []string `json:"domains,omitempty"`
+}
+
 // PedidoStart é o corpo de POST /v1/projects/{nome}/start.
 type PedidoStart struct {
 	// Porta fixa a porta do servidor. Zero deixa o daemon escolher.

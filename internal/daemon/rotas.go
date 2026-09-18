@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/AlexRogaleski/devmanager/internal/proxy"
 )
 
 // rotas monta o roteador da API.
@@ -19,6 +21,7 @@ func (s *Servidor) rotas() http.Handler {
 
 	mux.HandleFunc("GET /"+Versao+"/health", s.rotaSaude)
 	mux.HandleFunc("GET /"+Versao+"/environments", s.rotaListar)
+	mux.HandleFunc("GET /"+Versao+"/proxy", s.rotaProxy)
 	mux.HandleFunc("POST /"+Versao+"/environments/{nome}/start", s.rotaStart)
 	mux.HandleFunc("POST /"+Versao+"/environments/{nome}/stop", s.rotaStop)
 	mux.HandleFunc("GET /"+Versao+"/environments/{nome}/logs", s.rotaLogs)
@@ -44,6 +47,10 @@ func (s *Servidor) rotaSaude(w http.ResponseWriter, r *http.Request) {
 
 func (s *Servidor) rotaListar(w http.ResponseWriter, r *http.Request) {
 	escreverJSON(w, http.StatusOK, s.listar())
+}
+
+func (s *Servidor) rotaProxy(w http.ResponseWriter, r *http.Request) {
+	escreverJSON(w, http.StatusOK, s.InfoProxy())
 }
 
 func (s *Servidor) rotaStart(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +101,17 @@ func (s *Servidor) rotaStart(w http.ResponseWriter, r *http.Request) {
 	s.ambientes[nome] = amb
 	s.mu.Unlock()
 
+	// A rota só entra DEPOIS do ambiente estar de pé. Registrá-la antes
+	// faria o proxy anunciar um domínio que responderia 502.
+	instantaneo := amb.snapshot()
+	if instantaneo.Dominio != "" && instantaneo.Porta != 0 {
+		s.tabela.Definir(proxy.Rota{
+			Dominio: instantaneo.Dominio,
+			Porta:   instantaneo.Porta,
+			Projeto: nome,
+		})
+	}
+
 	s.logf("ambiente %q iniciado", nome)
 	escreverJSON(w, http.StatusOK, amb.snapshot())
 }
@@ -111,6 +129,10 @@ func (s *Servidor) rotaStop(w http.ResponseWriter, r *http.Request) {
 	if !existe {
 		escreverErro(w, http.StatusNotFound, fmt.Errorf("o ambiente %q não está rodando", nome))
 		return
+	}
+
+	if dominio := amb.snapshot().Dominio; dominio != "" {
+		s.tabela.Remover(dominio)
 	}
 
 	amb.cancelar()

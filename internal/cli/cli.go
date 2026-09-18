@@ -67,6 +67,8 @@ func Run(args []string, stdio IO) error {
 		return logsCmd(stdio.Out, resto)
 	case "daemon":
 		return daemonCmd(stdio, resto)
+	case "proxy":
+		return proxyCmd(stdio, resto)
 	case "run":
 		return runCmd(stdio, resto)
 	case "artisan":
@@ -138,6 +140,10 @@ Daemon:
   daemon stop      encerra o daemon e todos os ambientes
   daemon logs      mostra o log do próprio daemon
   daemon install   grava o unit do systemd para subir no login
+
+Domínios locais:
+  proxy status     mostra o proxy e os domínios ativos
+  proxy ca         mostra como confiar no certificado local
 
 Outros:
   version    mostra a versão do Dev Manager

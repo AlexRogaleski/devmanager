@@ -85,6 +85,12 @@ func (c *Cliente) Listar(ctx context.Context) ([]daemon.Ambiente, error) {
 	return lista, err
 }
 
+func (c *Cliente) Proxy(ctx context.Context) (daemon.Proxy, error) {
+	var p daemon.Proxy
+	err := c.pedir(ctx, http.MethodGet, "/proxy", nil, &p)
+	return p, err
+}
+
 func (c *Cliente) Start(ctx context.Context, nome string, pedido daemon.PedidoStart) (daemon.Ambiente, error) {
 	var amb daemon.Ambiente
 	err := c.pedir(ctx, http.MethodPost, "/environments/"+nome+"/start", pedido, &amb)
