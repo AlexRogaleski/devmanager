@@ -178,6 +178,27 @@ ordem: `devmanager.yaml`, `.nvmrc`, `engines.node` do `package.json`.
 Quando gerenciado, o shim expõe `node`, `npm` e `npx` juntos: um `npm run dev`
 que caísse no npm do sistema rodaria com a versão errada de Node por baixo.
 
+### Assistentes de IA
+
+```sh
+devm agents              # mostra o que seria escrito
+devm agents apply        # grava DEVMANAGER.md
+devm agents apply --link # e acrescenta a referência aos seus arquivos
+```
+
+Gera um `DEVMANAGER.md` com as instruções específicas deste projeto — versão
+de PHP, serviços, portas reais, comandos — para que assistentes usem `devm
+artisan` em vez de `sail artisan`.
+
+É um arquivo **próprio**: nada escrito à mão corre risco, e remover é `rm`. Em
+troca, os assistentes não o leem sozinhos, e uma linha de referência precisa
+existir num arquivo que eles já leiam (`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`,
+`copilot-instructions.md`). O comando mostra a linha; `--link` a acrescenta.
+
+> Num projeto migrado do Sail, vale revisar o que os seus arquivos já dizem.
+> Uma instrução antiga do tipo "rode tudo com `vendor/bin/sail`" passa a
+> contradizer o Dev Manager, e o assistente vai seguir a que ler primeiro.
+
 ### Editores
 
 ```sh

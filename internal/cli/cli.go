@@ -87,6 +87,8 @@ func Run(args []string, stdio IO) error {
 
 	case "ide":
 		return ideCmd(stdio.Out, resto)
+	case "agents":
+		return agentsCmd(stdio, resto)
 
 	case "version":
 		return versionCmd(stdio.Out, resto)
@@ -133,6 +135,7 @@ Serviços:
 
 Editor:
   ide        aponta as extensões do editor para o PHP do projeto
+  agents     ensina assistentes de IA a usar o devm neste projeto
 
 Runtimes:
   php list   lista as versões de PHP disponíveis
