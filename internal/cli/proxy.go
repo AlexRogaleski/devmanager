@@ -72,20 +72,37 @@ func proxyStatusCmd(w io.Writer, args []string) error {
 	} else {
 		fmt.Fprintln(w, "\ndomínios:")
 		for _, d := range info.Dominios {
-			esquema := "https://"
-			sufixo := ""
-			if info.SemPrivilegio {
-				// Fora da 443, o navegador precisa da porta explícita.
-				sufixo = fmt.Sprintf(":%d", info.PortaHTTPS)
+			fmt.Fprintf(w, "  %s\n", urlDoDominio("https", d, info.PortaHTTPS))
+			// O HTTP entra só quando está numa porta diferente da padrão —
+			// nesse caso a URL não é óbvia e vale mostrar as duas.
+			if info.PortaHTTP != 80 {
+				fmt.Fprintf(w, "  %s\n", urlDoDominio("http", d, info.PortaHTTP))
 			}
-			fmt.Fprintf(w, "  %s%s%s\n", esquema, d, sufixo)
 		}
 	}
 
-	if info.SemPrivilegio {
-		fmt.Fprint(w, avisoDeQueda(info.MotivoDaQueda))
+	if info.PortaHTTP != 80 || info.PortaHTTPS != 443 {
+		fmt.Fprint(w, avisoDeQueda(info.MotivoDaQueda, info.PortaHTTP, info.PortaHTTPS))
 	}
 	return nil
+}
+
+// urlDoDominio monta a URL, omitindo a porta quando ela é a padrão.
+//
+// Imprimir "https://suma.test:443" é tecnicamente correto e praticamente
+// ruim: a pessoa lê o 443, conclui que precisa dele, e não percebe que
+// "https://suma.test" — que é o que ela digitaria naturalmente — já funciona.
+// Foi exatamente o que aconteceu quando o HTTPS pegou a 443 e o HTTP caiu
+// para 8080: a saída sugeria uma porta alternativa que não existia.
+func urlDoDominio(esquema, dominio string, porta int) string {
+	padrao := 80
+	if esquema == "https" {
+		padrao = 443
+	}
+	if porta == padrao || porta == 0 {
+		return esquema + "://" + dominio
+	}
+	return fmt.Sprintf("%s://%s:%d", esquema, dominio, porta)
 }
 
 // avisoDeQueda explica por que o proxy não está nas portas padrão.
@@ -94,12 +111,25 @@ func proxyStatusCmd(w io.Writer, args []string) error {
 // permissão se resolve com setcap; porta ocupada se resolve parando quem está
 // lá. Uma mensagem genérica mandaria metade dos usuários rodar um comando que
 // não resolve nada no caso deles.
-func avisoDeQueda(motivo string) string {
+func avisoDeQueda(motivo string, portaHTTP, portaHTTPS int) string {
 	if motivo == "" {
-		motivo = "as portas 80 e 443 não puderam ser usadas"
+		motivo = "as portas padrão não puderam ser usadas"
 	}
 
-	cabecalho := fmt.Sprintf("\no proxy está em portas alternativas: %s\n", motivo)
+	// Dizer QUAL protocolo caiu evita a confusão de procurar o HTTPS numa
+	// porta alternativa quando foi só o HTTP que mudou — os dois caem de
+	// forma independente, e frequentemente só um deles cai.
+	var quais string
+	switch {
+	case portaHTTP != 80 && portaHTTPS != 443:
+		quais = fmt.Sprintf("http em :%d e https em :%d", portaHTTP, portaHTTPS)
+	case portaHTTP != 80:
+		quais = fmt.Sprintf("http em :%d (o https está na 443, como de costume)", portaHTTP)
+	default:
+		quais = fmt.Sprintf("https em :%d (o http está na 80, como de costume)", portaHTTPS)
+	}
+
+	cabecalho := fmt.Sprintf("\n%s — %s\n", motivo, quais)
 
 	// Porta ocupada: o conserto é parar quem está lá, não dar permissão.
 	if strings.Contains(motivo, "ocupada") {
