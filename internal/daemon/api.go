@@ -80,6 +80,7 @@ type Proxy struct {
 	PortaHTTP     int      `json:"http_port,omitempty"`
 	PortaHTTPS    int      `json:"https_port,omitempty"`
 	SemPrivilegio bool     `json:"unprivileged,omitempty"`
+	MotivoDaQueda string   `json:"fallback_reason,omitempty"`
 	CertificadoCA string   `json:"ca_cert,omitempty"`
 	Dominios      []string `json:"domains,omitempty"`
 	DNS           DNS      `json:"dns"`

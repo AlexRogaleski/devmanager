@@ -68,11 +68,10 @@ static:
 ## O home é compartilhado entre o container de desenvolvimento e o host, então
 ## o binário compilado aqui fica imediatamente disponível lá.
 install-host: static
-	@mkdir -p $(dir $(HOST_BIN))
-	install -m 0755 bin/devm $(HOST_BIN)
-	@echo
-	@echo "instalado em $(HOST_BIN)"
-	@echo "no host, rode:  devm version"
+	@# Capacidades do setcap são atributos do ARQUIVO: substituir o binário
+	@# as apaga. Detectamos antes para poder avisar depois — descobrir isso
+	@# só quando o proxy cair na porta alternativa custa caro.
+	@TINHA=$$(getcap $(HOST_BIN) 2>/dev/null | grep -c cap_net_bind_service || true); 	mkdir -p $(dir $(HOST_BIN)); 	install -m 0755 bin/devm $(HOST_BIN); 	echo; 	echo "instalado em $(HOST_BIN)"; 	if [ "$$TINHA" != "0" ]; then 		echo; 		echo "ATENÇÃO: o binário tinha cap_net_bind_service e a substituição apagou."; 		echo "para o proxy voltar às portas 80/443:"; 		echo "  sudo setcap 'cap_net_bind_service=+ep' $(HOST_BIN)"; 		echo "  devm daemon stop && devm daemon start"; 	fi
 
 ## clean: remove artefatos de build
 clean:

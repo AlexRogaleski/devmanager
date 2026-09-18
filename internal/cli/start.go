@@ -32,17 +32,22 @@ func startCmd(stdio IO, args []string) error {
 	destacar := fs.Bool("d", false, "sobe em segundo plano, via daemon")
 	fs.BoolVar(destacar, "detach", false, "o mesmo que -d")
 
-	if _, err := parseArgs(fs, args); err != nil {
+	posicionais, err := parseArgs(fs, args)
+	if err != nil {
 		return err
 	}
 
 	if *destacar {
-		return startDestacadoCmd(stdio, *porta, *apenas, *semNode)
+		return startDestacadoCmd(stdio, posicionais, *porta, *apenas, *semNode)
+	}
+	if len(posicionais) > 0 {
+		return fmt.Errorf("o start em primeiro plano roda o projeto da pasta atual\n" +
+			"  para subir outro projeto pelo nome, use `devm start -d <projeto>`")
 	}
 
-	p, r, err := ambienteDoProjeto()
-	if err != nil {
-		return err
+	p, r, errAmb := ambienteDoProjeto()
+	if errAmb != nil {
+		return errAmb
 	}
 	r.Stdout, r.Stderr = stdio.Out, stdio.Err
 
@@ -166,17 +171,25 @@ func (e *sairComCodigo) Code() int     { return e.codigo }
 // vivem: aqui eles pertencem ao daemon, que sobrevive ao fechamento do
 // terminal. O preparo — PHP, serviços, escolha de processos — é idêntico,
 // porque os dois caminhos usam o mesmo pacote environment.
-func startDestacadoCmd(stdio IO, porta int, apenas string, semNode bool) error {
+func startDestacadoCmd(stdio IO, posicionais []string, porta int, apenas string, semNode bool) error {
 	w := stdio.Out
 
-	p, err := localizarProjeto()
-	if err != nil {
-		return err
-	}
-
-	nome, err := registrarSeNecessario(w, p)
-	if err != nil {
-		return err
+	// Com nome, opera em qualquer projeto registrado de qualquer lugar —
+	// é o que permite religar tudo depois de reiniciar o daemon, sem ter
+	// que entrar na pasta de cada um.
+	var nome string
+	if len(posicionais) > 0 {
+		nome = posicionais[0]
+	} else {
+		p, err := localizarProjeto()
+		if err != nil {
+			return err
+		}
+		registrado, err := registrarSeNecessario(w, p)
+		if err != nil {
+			return err
+		}
+		nome = registrado
 	}
 
 	c, err := garantirDaemon(w)

@@ -147,6 +147,21 @@ func daemonStopCmd(w io.Writer, args []string) error {
 		return nil
 	}
 
+	// Parar o daemon derruba TODOS os ambientes junto, e isso não é óbvio
+	// para quem só quer aplicar uma configuração nova. Listar o que vai cair
+	// evita a surpresa de voltar ao navegador e encontrar tudo fora do ar.
+	if ambientes, err := c.Listar(ctx); err == nil && len(ambientes) > 0 {
+		fmt.Fprintf(w, "isto vai derrubar %d ambiente(s):\n", len(ambientes))
+		for _, a := range ambientes {
+			fmt.Fprintf(w, "  %s\n", a.Projeto)
+		}
+		fmt.Fprintln(w, "\npara subir de novo depois:")
+		for _, a := range ambientes {
+			fmt.Fprintf(w, "  devm start -d %s\n", a.Projeto)
+		}
+		fmt.Fprintln(w)
+	}
+
 	// SIGTERM ao PID, em vez de uma rota /shutdown: o encerramento já está
 	// implementado no tratamento de sinal, que é o mesmo caminho que o
 	// systemd usa. Uma rota seria um segundo caminho para a mesma coisa.

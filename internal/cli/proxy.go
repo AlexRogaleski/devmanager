@@ -8,9 +8,9 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strings"
 
 	"github.com/AlexRogaleski/devmanager/internal/client"
-	"github.com/AlexRogaleski/devmanager/internal/proxy"
 )
 
 // proxyCmd despacha os subcomandos de `devm proxy`.
@@ -83,31 +83,46 @@ func proxyStatusCmd(w io.Writer, args []string) error {
 	}
 
 	if info.SemPrivilegio {
-		fmt.Fprint(w, avisoDePrivilegio())
+		fmt.Fprint(w, avisoDeQueda(info.MotivoDaQueda))
 	}
 	return nil
 }
 
-// avisoDePrivilegio explica como liberar as portas 80 e 443.
+// avisoDeQueda explica por que o proxy não está nas portas padrão.
 //
-// setcap concede ao BINÁRIO a capacidade de abrir portas privilegiadas, sem
-// que ele rode como root. É a diferença entre dar uma permissão específica e
-// dar todas — e um daemon de desenvolvimento não tem motivo para ser root.
-func avisoDePrivilegio() string {
+// A explicação é específica porque os consertos são diferentes: falta de
+// permissão se resolve com setcap; porta ocupada se resolve parando quem está
+// lá. Uma mensagem genérica mandaria metade dos usuários rodar um comando que
+// não resolve nada no caso deles.
+func avisoDeQueda(motivo string) string {
+	if motivo == "" {
+		motivo = "as portas 80 e 443 não puderam ser usadas"
+	}
+
+	cabecalho := fmt.Sprintf("\no proxy está em portas alternativas: %s\n", motivo)
+
+	// Porta ocupada: o conserto é parar quem está lá, não dar permissão.
+	if strings.Contains(motivo, "ocupada") {
+		return cabecalho + `
+descubra quem está usando a porta com:
+
+  ss -ltnp | grep ':80 '
+  docker ps --format '{{.Names}}\t{{.Ports}}' | grep ':80'
+
+pare aquele serviço e reinicie o daemon, ou continue usando as portas
+alternativas — os projetos funcionam igual, só com a porta na URL.
+`
+	}
+
 	exe, err := os.Executable()
 	if err != nil {
 		exe = "$(which devm)"
 	}
-
 	if runtime.GOOS != "linux" {
-		return fmt.Sprintf(`
-o proxy está em portas alternativas porque 80 e 443 exigem privilégio
-  os domínios ficam como http://projeto.test:%d
-`, proxy.PortaHTTPFallback)
+		return cabecalho
 	}
 
-	return fmt.Sprintf(`
-o proxy está em portas alternativas porque 80 e 443 exigem privilégio.
+	return cabecalho + fmt.Sprintf(`
 para usar as portas padrão, conceda a capacidade ao binário:
 
   sudo setcap 'cap_net_bind_service=+ep' %s

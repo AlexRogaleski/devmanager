@@ -151,6 +151,7 @@ func (s *Servidor) InfoProxy() Proxy {
 		PortaHTTP:     s.proxy.PortaHTTP,
 		PortaHTTPS:    s.proxy.PortaHTTPS,
 		SemPrivilegio: s.proxy.SemPrivilegio,
+		MotivoDaQueda: s.proxy.MotivoDaQueda,
 		CertificadoCA: s.proxy.CA.CaminhoDoCertificado(),
 		Dominios:      s.tabela.Dominios(),
 		DNS:           s.infoDNS(),

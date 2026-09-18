@@ -41,6 +41,9 @@ type Proxy struct {
 	// SemPrivilegio indica que caímos para as portas alternativas.
 	SemPrivilegio bool
 
+	// MotivoDaQueda explica por que as portas padrão não foram usadas.
+	MotivoDaQueda string
+
 	lnHTTP, lnHTTPS   net.Listener
 	srvHTTP, srvHTTPS *http.Server
 }
@@ -56,41 +59,55 @@ func Novo(tabela *Tabela, ca *CA, saida io.Writer) *Proxy {
 func (p *Proxy) Escutar() error {
 	var err error
 
-	p.lnHTTP, p.PortaHTTP, err = escutarCom(PortaHTTPPadrao, PortaHTTPFallback)
+	var motivo string
+
+	p.lnHTTP, p.PortaHTTP, motivo, err = escutarCom(PortaHTTPPadrao, PortaHTTPFallback)
 	if err != nil {
 		return fmt.Errorf("abrindo a porta HTTP: %w", err)
 	}
 
-	p.lnHTTPS, p.PortaHTTPS, err = escutarCom(PortaHTTPSPadrao, PortaHTTPSFallback)
+	p.lnHTTPS, p.PortaHTTPS, _, err = escutarCom(PortaHTTPSPadrao, PortaHTTPSFallback)
 	if err != nil {
 		p.lnHTTP.Close()
 		return fmt.Errorf("abrindo a porta HTTPS: %w", err)
 	}
 
 	p.SemPrivilegio = p.PortaHTTP != PortaHTTPPadrao
+	p.MotivoDaQueda = motivo
 	return nil
 }
 
-// escutarCom tenta a porta desejada e cai para a alternativa se for negada.
+// escutarCom tenta a porta desejada e cai para a alternativa se ela não der.
 //
-// Distinguimos "sem permissão" de "porta ocupada" de propósito: a primeira
-// tem conserto conhecido (setcap) e a segunda significa que outro servidor
-// já está lá — cair para a alternativa na segunda esconderia o conflito.
-func escutarCom(desejada, alternativa int) (net.Listener, int, error) {
+// Cai nos DOIS casos — sem permissão e porta ocupada — e devolve o motivo
+// para que a mensagem ao usuário seja específica, porque os consertos são
+// diferentes: falta de permissão se resolve com setcap, porta ocupada se
+// resolve parando quem está lá.
+//
+// A primeira versão desistia quando a porta estava ocupada, com o argumento
+// de que cair para a alternativa esconderia um conflito real. O argumento
+// estava errado na prática: numa máquina de desenvolvimento é comum outra
+// ferramenta legitimamente ocupar a 80 — um Sail, um Apache do sistema — e
+// perder o proxy INTEIRO por causa disso é desproporcional. Reportar a queda
+// resolve o risco de esconder o conflito sem custar a funcionalidade.
+func escutarCom(desejada, alternativa int) (net.Listener, int, string, error) {
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", desejada))
 	if err == nil {
-		return ln, desejada, nil
+		return ln, desejada, "", nil
 	}
 
-	if !errors.Is(err, os.ErrPermission) {
-		return nil, 0, err
+	motivo := fmt.Sprintf("a porta %d está ocupada", desejada)
+	if errors.Is(err, os.ErrPermission) {
+		motivo = fmt.Sprintf("sem permissão para a porta %d", desejada)
 	}
 
-	ln, err = net.Listen("tcp", fmt.Sprintf(":%d", alternativa))
+	alt, err := net.Listen("tcp", fmt.Sprintf(":%d", alternativa))
 	if err != nil {
-		return nil, 0, err
+		// As duas falharam: aí sim não há o que fazer, e o erro precisa
+		// mencionar as duas portas para o diagnóstico ser possível.
+		return nil, 0, "", fmt.Errorf("%s, e a alternativa %d também falhou: %w", motivo, alternativa, err)
 	}
-	return ln, alternativa, nil
+	return alt, alternativa, motivo, nil
 }
 
 // Servir atende até o contexto ser cancelado.
@@ -134,8 +151,8 @@ func (p *Proxy) Servir(ctx context.Context) error {
 	go func() { erros <- ignorarFechamento(p.srvHTTPS.ServeTLS(p.lnHTTPS, "", "")) }()
 
 	p.logf("proxy ouvindo em http://:%d e https://:%d", p.PortaHTTP, p.PortaHTTPS)
-	if p.SemPrivilegio {
-		p.logf("sem permissão para as portas 80/443 — veja `devm proxy status`")
+	if p.MotivoDaQueda != "" {
+		p.logf("%s — usando %d e %d", p.MotivoDaQueda, p.PortaHTTP, p.PortaHTTPS)
 	}
 
 	select {
