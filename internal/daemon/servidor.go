@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AlexRogaleski/devmanager/internal/dns"
 	"github.com/AlexRogaleski/devmanager/internal/paths"
 	"github.com/AlexRogaleski/devmanager/internal/proxy"
 	"github.com/AlexRogaleski/devmanager/internal/registry"
@@ -38,6 +39,8 @@ type Servidor struct {
 	// um ambiente sobe, e o proxy as lê a cada requisição.
 	tabela *proxy.Tabela
 	proxy  *proxy.Proxy
+	dns    *dns.Servidor
+	dnsErr string
 
 	desdeQue time.Time
 	ln       net.Listener
@@ -108,6 +111,33 @@ func (s *Servidor) iniciarProxy(ctx context.Context) {
 			s.logf("proxy encerrado com erro: %v", err)
 		}
 	}()
+
+	s.iniciarDNS(ctx)
+}
+
+// iniciarDNS sobe o servidor de domínios locais.
+//
+// Como o proxy, falhar aqui não derruba o daemon: sem DNS os projetos ainda
+// respondem por 127.0.0.1:porta, só perdem o nome amigável.
+func (s *Servidor) iniciarDNS(ctx context.Context) {
+	d := dns.Novo(dns.PortaPadrao, s.Saida)
+
+	// Uma escuta de teste antes de entregar ao servidor detecta porta
+	// ocupada aqui, e não numa goroutine cujo erro ninguém veria.
+	teste, err := net.Listen("tcp", d.Endereco())
+	if err != nil {
+		s.dnsErr = err.Error()
+		s.logf("dns indisponível: %v", err)
+		return
+	}
+	teste.Close()
+
+	s.dns = d
+	go func() {
+		if err := d.Servir(ctx); err != nil {
+			s.logf("dns encerrado com erro: %v", err)
+		}
+	}()
 }
 
 // InfoProxy descreve o estado do proxy para a API.
@@ -123,7 +153,15 @@ func (s *Servidor) InfoProxy() Proxy {
 		SemPrivilegio: s.proxy.SemPrivilegio,
 		CertificadoCA: s.proxy.CA.CaminhoDoCertificado(),
 		Dominios:      s.tabela.Dominios(),
+		DNS:           s.infoDNS(),
 	}
+}
+
+func (s *Servidor) infoDNS() DNS {
+	if s.dns == nil {
+		return DNS{Motivo: s.dnsErr}
+	}
+	return DNS{Ativo: true, Endereco: s.dns.Endereco(), TLD: s.dns.TLD}
 }
 
 // Escutar abre o socket, recusando subir se já há um daemon.
@@ -220,6 +258,9 @@ func (s *Servidor) Encerrar() error {
 		amb.anel.Fechar()
 	}
 
+	if s.dns != nil {
+		_ = s.dns.Encerrar()
+	}
 	if s.proxy != nil {
 		_ = s.proxy.Encerrar()
 	}

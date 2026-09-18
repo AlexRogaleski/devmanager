@@ -82,6 +82,15 @@ type Proxy struct {
 	SemPrivilegio bool     `json:"unprivileged,omitempty"`
 	CertificadoCA string   `json:"ca_cert,omitempty"`
 	Dominios      []string `json:"domains,omitempty"`
+	DNS           DNS      `json:"dns"`
+}
+
+// DNS descreve o servidor de domínios locais.
+type DNS struct {
+	Ativo    bool   `json:"active"`
+	Endereco string `json:"address,omitempty"`
+	TLD      string `json:"tld,omitempty"`
+	Motivo   string `json:"reason,omitempty"`
 }
 
 // PedidoStart é o corpo de POST /v1/projects/{nome}/start.

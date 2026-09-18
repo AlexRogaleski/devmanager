@@ -69,6 +69,8 @@ func Run(args []string, stdio IO) error {
 		return daemonCmd(stdio, resto)
 	case "proxy":
 		return proxyCmd(stdio, resto)
+	case "dns":
+		return dnsCmd(stdio, resto)
 	case "run":
 		return runCmd(stdio, resto)
 	case "artisan":
@@ -145,6 +147,8 @@ Daemon:
 Domínios locais:
   proxy status     mostra o proxy e os domínios ativos
   proxy ca         mostra como confiar no certificado local
+  dns status       mostra se os domínios .test resolvem
+  dns install      mostra como configurar a resolução
 
 Outros:
   version    mostra a versão do Dev Manager
