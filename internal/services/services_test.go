@@ -355,20 +355,36 @@ func TestDetectar(t *testing.T) {
 
 // Com preferência explícita, só o engine escolhido é tentado — e a mensagem
 // de erro não pode sugerir instalar o outro.
+//
+// O teste instala DOIS binários falsos: um podman que funciona e um docker
+// que falha como se o serviço estivesse parado. Os dois são necessários.
+//
+// O podman falso prova que a preferência o exclui. O docker falso existe
+// porque a versão anterior deste teste esperava que `Detectar(ctx, "docker")`
+// falhasse por o docker não existir na máquina — o que é verdade na máquina
+// de quem escreveu e falso no CI, onde o docker vem instalado e respondendo.
+// Sombrear o binário real é o que torna o resultado igual nos dois lugares.
 func TestDetectarRespeitaPreferencia(t *testing.T) {
 	dir := t.TempDir()
-	falso := filepath.Join(dir, "podman")
-	if err := os.WriteFile(falso, []byte(scriptEngineFalso), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "podman"), []byte(scriptEngineFalso), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Um binário instalado com o serviço parado é um caso real, e é o que o
+	// código trata ao perguntar a versão em vez de só procurar o executável.
+	docker := "#!/bin/sh\necho 'Cannot connect to the Docker daemon' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(docker), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Setenv("FAKE_ESTADO", filepath.Join(dir, "estado"))
+	// dir vem PRIMEIRO no PATH: é o prefixo que faz os falsos vencerem
+	// qualquer podman ou docker de verdade que a máquina tenha.
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	// Preferindo docker, o podman falso presente no PATH é ignorado.
+	// Preferindo docker, o podman falso — que funcionaria — é ignorado.
 	_, err := Detectar(context.Background(), "docker")
 	if err == nil {
-		t.Fatal("esperava erro: só o docker deveria ter sido tentado")
+		t.Fatal("esperava erro: o docker falso não responde")
 	}
 	if strings.Contains(err.Error(), "podman:") {
 		t.Errorf("o podman não deveria ter sido tentado: %v", err)
