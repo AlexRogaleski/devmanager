@@ -20,6 +20,66 @@ import (
 	"strings"
 )
 
+// modoDoEnv é a permissão de qualquer arquivo que este pacote grava.
+//
+// 0600 mantém as credenciais fora do alcance de outros usuários da máquina.
+// É uma constante, e não um literal repetido, porque a cópia de segurança
+// precisa da MESMA permissão do .env — e não da permissão que o original
+// tinha. A primeira versão herdava o modo da fonte, e num projeto onde o
+// .env estava com 0644 o resultado era uma cópia legível por todos ao lado
+// de um .env que o próprio devm acabara de restringir. Mesmo segredo, modo
+// diferente, pelo mesmo caminho de código.
+const modoDoEnv = os.FileMode(0o600)
+
+// SufixoCopia nomeia a cópia de segurança do .env original.
+//
+// O nome é explícito de propósito. Um ".bak" não diz de onde veio nem por
+// que existe, e seis meses depois ninguém sabe se pode apagar.
+const SufixoCopia = ".antes-do-devmanager"
+
+// CaminhoDaCopia devolve onde fica a cópia de um .env.
+func CaminhoDaCopia(caminho string) string { return caminho + SufixoCopia }
+
+// salvarCopia guarda o arquivo original antes da primeira modificação.
+//
+// Duas regras, e as duas importam:
+//
+// Só na PRIMEIRA vez. Se a cópia já existe, ela é preservada — mesmo que o
+// .env tenha mudado desde então. Sobrescrever a cada gravação transformaria
+// a cópia em "o estado antes da última edição", e depois do segundo `devm up`
+// o arquivo original estaria perdido para sempre. O valor de uma cópia de
+// segurança é ser a ORIGINAL.
+//
+// Só quando há algo a copiar. Um projeto sem .env não ganha uma cópia vazia.
+//
+// A gravação é O_EXCL: se dois processos chegarem juntos, um cria e o outro
+// recebe EEXIST em vez de os dois escreverem no mesmo arquivo.
+func salvarCopia(caminho string) error {
+	destino := CaminhoDaCopia(caminho)
+
+	original, err := os.ReadFile(caminho)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("lendo %s: %w", caminho, err)
+	}
+
+	f, err := os.OpenFile(destino, os.O_WRONLY|os.O_CREATE|os.O_EXCL, modoDoEnv)
+	if err != nil {
+		if os.IsExist(err) {
+			return nil // já existe: é a original, não toca
+		}
+		return fmt.Errorf("criando %s: %w", destino, err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(original); err != nil {
+		return fmt.Errorf("gravando %s: %w", destino, err)
+	}
+	return f.Close()
+}
+
 // Load lê um .env. Arquivo ausente devolve um mapa vazio, não erro.
 func Load(caminho string) (map[string]string, error) {
 	valores := map[string]string{}
@@ -71,6 +131,13 @@ func Set(caminho string, valores map[string]string) ([]string, error) {
 	}
 	if len(pendentes) == 0 {
 		return nil, nil
+	}
+
+	// A cópia é feita AQUI, depois de saber que algo vai mudar de verdade.
+	// Posta antes da checagem, um `devm up` que não altera nada criaria um
+	// arquivo novo no projeto sem motivo.
+	if err := salvarCopia(caminho); err != nil {
+		return nil, err
 	}
 
 	linhas := strings.Split(string(original), "\n")
@@ -204,9 +271,7 @@ func escreverAtomico(destino string, dados []byte) error {
 		return fmt.Errorf("fechando %s: %w", nome, err)
 	}
 
-	// O .env tem credenciais: 0600 mantém fora do alcance de outros usuários
-	// da máquina. É a permissão que o próprio Laravel usa.
-	if err := os.Chmod(nome, 0o600); err != nil {
+	if err := os.Chmod(nome, modoDoEnv); err != nil {
 		return fmt.Errorf("ajustando permissões: %w", err)
 	}
 	if err := os.Rename(nome, destino); err != nil {

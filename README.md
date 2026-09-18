@@ -126,6 +126,18 @@ devm stop suma
 
 `devm up` é idempotente: rodar de novo não reescreve nada que já esteja certo.
 
+Na primeira vez que ele **altera** o `.env`, o original é guardado em
+`.env.antes-do-devmanager`. A cópia é feita uma vez só: nas execuções
+seguintes ela é preservada, porque o que interessa é o arquivo original — uma
+cópia refeita a cada gravação valeria "o estado antes da última edição", e
+depois do segundo `devm up` o que você escreveu à mão estaria perdido.
+
+A edição em si é por linha e preserva comentários, ordem e as chaves que o
+Dev Manager não conhece. O `.env` novo fica com permissão `0600`, e a cópia
+também — mesmas credenciais, mesma restrição. Como o arquivo não está no
+`.gitignore` padrão do Laravel, o `devm up` avisa e sugere a linha; ele não
+edita o seu `.gitignore`.
+
 ### Executar comandos
 
 ```sh

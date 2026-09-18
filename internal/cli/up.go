@@ -4,7 +4,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 
+	"github.com/AlexRogaleski/devmanager/internal/dotenv"
 	"github.com/AlexRogaleski/devmanager/internal/prepare"
 	"github.com/AlexRogaleski/devmanager/internal/project"
 	"github.com/AlexRogaleski/devmanager/internal/services"
@@ -97,6 +102,11 @@ func upCmd(stdio IO, args []string) error {
 
 	executaveis, bloqueados := prepare.Executaveis(pendentes)
 
+	// Anotado ANTES de executar: é a única forma de saber, depois, se a
+	// cópia do .env nasceu nesta execução ou já existia de outra.
+	copia := dotenv.CaminhoDaCopia(filepath.Join(p.Path, ".env"))
+	tinhaCopia := dotenv.Existe(copia)
+
 	for i, passo := range executaveis {
 		fmt.Fprintf(w, "\n[%d/%d] %s\n", i+1, len(executaveis), passo.Nome)
 
@@ -107,6 +117,8 @@ func upCmd(stdio IO, args []string) error {
 			return fmt.Errorf("falhou em %q: %w", passo.Nome, err)
 		}
 	}
+
+	avisarCopiaDoEnv(w, p.Path, copia, tinhaCopia)
 
 	if len(bloqueados) > 0 {
 		fmt.Fprintln(w, "\nficou pendente:")
@@ -122,6 +134,52 @@ func upCmd(stdio IO, args []string) error {
 		fmt.Fprintln(w, "  devm start   sobe servidor e frontend")
 	}
 	return nil
+}
+
+// avisarCopiaDoEnv conta que o .env original foi guardado.
+//
+// A cópia é feita em silêncio pelo pacote dotenv, mas o usuário precisa saber
+// que ela existe — tanto para poder restaurar quanto porque é um arquivo novo
+// aparecendo no projeto dele.
+func avisarCopiaDoEnv(w io.Writer, dirProjeto, copia string, tinhaAntes bool) {
+	if tinhaAntes || !dotenv.Existe(copia) {
+		return
+	}
+
+	nome := filepath.Base(copia)
+	fmt.Fprintf(w, "\ncópia do .env original em %s\n", nome)
+
+	// O aviso do .gitignore não é preciosismo: o arquivo tem as mesmas
+	// credenciais do .env, e um `git add .` distraído o comita.
+	//
+	// O .gitignore do usuário NÃO é editado por nós. Ele é um arquivo com
+	// significado no repositório dele, e a linha é curta o bastante para
+	// ele decidir.
+	if !gitIgnora(dirProjeto, nome) {
+		fmt.Fprintf(w, "  tem credenciais e não está ignorado pelo git:\n")
+		fmt.Fprintf(w, "    echo %s >> .gitignore\n", nome)
+	}
+}
+
+// gitIgnora diz se o .gitignore do projeto já cobre um nome de arquivo.
+//
+// A checagem é deliberadamente simples: o nome exato ou um dos padrões que
+// pegam tudo que começa com .env. Não reimplementamos as regras do gitignore
+// — na dúvida, avisar de novo é melhor que calar sobre um arquivo com
+// credenciais.
+func gitIgnora(dirProjeto, nome string) bool {
+	dados, err := os.ReadFile(filepath.Join(dirProjeto, ".gitignore"))
+	if err != nil {
+		return false
+	}
+
+	for _, linha := range strings.Split(string(dados), "\n") {
+		linha = strings.TrimSpace(linha)
+		if linha == nome || linha == ".env*" || linha == ".env.*" {
+			return true
+		}
+	}
+	return false
 }
 
 // resumoPendencias devolve os passos pendentes, para o detect.

@@ -208,3 +208,32 @@ func TestPhpListMostraTamanho(t *testing.T) {
 		t.Errorf("a listagem não tem a coluna de tamanho:\n%s", saida)
 	}
 }
+
+func TestGitIgnora(t *testing.T) {
+	dir := t.TempDir()
+
+	if gitIgnora(dir, ".env.antes-do-devmanager") {
+		t.Error("sem .gitignore nada está ignorado")
+	}
+
+	casos := []struct {
+		gitignore string
+		quer      bool
+	}{
+		{"/vendor\n.env\n", false},
+		{"/vendor\n.env\n.env.antes-do-devmanager\n", true},
+		{"  .env.antes-do-devmanager  \n", true},
+		{".env*\n", true},
+		{".env.*\n", true},
+		{"# .env.antes-do-devmanager\n", false},
+	}
+
+	for _, c := range casos {
+		if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(c.gitignore), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := gitIgnora(dir, ".env.antes-do-devmanager"); got != c.quer {
+			t.Errorf("gitIgnora com %q = %v, queria %v", c.gitignore, got, c.quer)
+		}
+	}
+}

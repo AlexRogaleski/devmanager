@@ -255,3 +255,91 @@ func TestSetNaoAcumulaLinhasEmBranco(t *testing.T) {
 		t.Errorf("acumulou linhas em branco:\n%q", texto)
 	}
 }
+
+func TestSetGuardaCopiaDoOriginal(t *testing.T) {
+	original := "DB_CONNECTION=sqlite\nDB_PASSWORD=segredo\n"
+	caminho := escrever(t, original)
+
+	if _, err := Set(caminho, map[string]string{"DB_CONNECTION": "mysql"}); err != nil {
+		t.Fatal(err)
+	}
+
+	copia := CaminhoDaCopia(caminho)
+	if !Existe(copia) {
+		t.Fatalf("a cópia não foi criada em %s", copia)
+	}
+	if got := ler(t, copia); got != original {
+		t.Errorf("a cópia não tem o conteúdo original:\n%q", got)
+	}
+}
+
+// TestSetNaoSobrescreveACopia é o teste que justifica a regra.
+//
+// Se a cópia fosse refeita a cada gravação, ela passaria a valer "o estado
+// antes da última edição" — e depois do segundo `devm up` o arquivo que o
+// usuário escreveu à mão estaria perdido. A cópia precisa ser a ORIGINAL.
+func TestSetNaoSobrescreveACopia(t *testing.T) {
+	original := "DB_CONNECTION=sqlite\n"
+	caminho := escrever(t, original)
+
+	if _, err := Set(caminho, map[string]string{"DB_CONNECTION": "mysql"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Set(caminho, map[string]string{"DB_CONNECTION": "pgsql"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := ler(t, CaminhoDaCopia(caminho)); got != original {
+		t.Errorf("a cópia foi sobrescrita:\n%q", got)
+	}
+}
+
+func TestSetNaoCriaCopiaQuandoNadaMuda(t *testing.T) {
+	caminho := escrever(t, "DB_CONNECTION=mysql\n")
+
+	if _, err := Set(caminho, map[string]string{"DB_CONNECTION": "mysql"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if Existe(CaminhoDaCopia(caminho)) {
+		t.Error("criou cópia sem ter alterado nada")
+	}
+}
+
+func TestSetNaoCriaCopiaDeArquivoInexistente(t *testing.T) {
+	caminho := filepath.Join(t.TempDir(), ".env")
+
+	if _, err := Set(caminho, map[string]string{"APP_ENV": "local"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if Existe(CaminhoDaCopia(caminho)) {
+		t.Error("criou cópia de um .env que não existia")
+	}
+}
+
+// TestCopiaUsaPermissaoRestrita guarda a correção de um defeito real.
+//
+// A cópia herdava o modo do original. Num projeto cujo .env estava 0644 — o
+// que o umask produz num `cat > .env` qualquer — a cópia saía legível por
+// todos, ao lado de um .env que o próprio Set acabara de restringir a 0600.
+// Mesmos segredos, dois modos, pelo mesmo caminho de código. O original
+// começa 0644 aqui de propósito: é o caso que falhava.
+func TestCopiaUsaPermissaoRestrita(t *testing.T) {
+	caminho := escrever(t, "DB_PASSWORD=segredo\n")
+	if err := os.Chmod(caminho, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Set(caminho, map[string]string{"DB_CONNECTION": "mysql"}); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(CaminhoDaCopia(caminho))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if modo := info.Mode().Perm(); modo != 0o600 {
+		t.Errorf("permissão da cópia = %o, queria 600", modo)
+	}
+}
