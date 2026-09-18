@@ -9,6 +9,7 @@ import (
 	"io"
 	"slices"
 
+	"github.com/AlexRogaleski/devmanager/internal/config"
 	"github.com/AlexRogaleski/devmanager/internal/environment"
 	"github.com/AlexRogaleski/devmanager/internal/services"
 )
@@ -16,7 +17,7 @@ import (
 // serviceCmd despacha os subcomandos de `devm service`.
 func serviceCmd(stdio IO, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprint(stdio.Out, "uso: devm service <list|catalog|start|stop|logs|remove> [argumentos]\n")
+		fmt.Fprint(stdio.Out, "uso: devm service <list|catalog|start|stop|logs|remove|engine> [argumentos]\n")
 		return nil
 	}
 
@@ -33,6 +34,8 @@ func serviceCmd(stdio IO, args []string) error {
 		return serviceRemoveCmd(stdio.Out, args[1:])
 	case "logs":
 		return serviceLogsCmd(stdio.Out, args[1:])
+	case "engine":
+		return serviceEngineCmd(stdio.Out, args[1:])
 	default:
 		return fmt.Errorf("subcomando desconhecido: service %q", args[0])
 	}
@@ -58,7 +61,7 @@ func serviceCatalogCmd(w io.Writer) error {
 
 // gerenciadorDeServicos detecta o engine e monta o Manager.
 func gerenciadorDeServicos(ctx context.Context, w io.Writer) (*services.Manager, error) {
-	engine, err := services.Detectar(ctx)
+	engine, err := services.DetectarConfigurado(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -311,4 +314,57 @@ func chavesOrdenadas(m map[string]string) []string {
 	}
 	slices.Sort(chaves)
 	return chaves
+}
+
+// serviceEngineCmd mostra ou define o runtime de contêiner usado.
+//
+//	devm service engine           mostra o escolhido e o detectado
+//	devm service engine docker    fixa o docker
+//	devm service engine auto      volta à detecção automática
+//
+// A escolha existe porque a detecção automática tenta podman primeiro — o que
+// é certo em sistemas imutáveis e errado para quem tem podman apenas por
+// causa do distrobox e trabalha com docker.
+func serviceEngineCmd(w io.Writer, args []string) error {
+	fs := flag.NewFlagSet("service engine", flag.ContinueOnError)
+	fs.SetOutput(w)
+
+	posicionais, err := parseArgs(fs, args)
+	if err != nil {
+		return err
+	}
+
+	if len(posicionais) > 0 {
+		if err := config.SetEngine(posicionais[0]); err != nil {
+			return err
+		}
+		caminho, _ := config.GlobalPath()
+		fmt.Fprintf(w, "engine definido como %q em %s\n", posicionais[0], caminho)
+		fmt.Fprintln(w, "\nreinicie o daemon para aplicar:")
+		fmt.Fprintln(w, "  devm daemon stop && devm daemon start")
+		return nil
+	}
+
+	g, err := config.LoadGlobal()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "configurado  %s\n", g.Engine)
+
+	engine, err := services.DetectarConfigurado(context.Background())
+	if err != nil {
+		fmt.Fprintf(w, "detectado    nenhum\n\n%v\n", err)
+		return nil
+	}
+
+	fmt.Fprintf(w, "detectado    %s %s", engine.Nome(), engine.Versao)
+	if engine.Rootless {
+		fmt.Fprint(w, " (rootless)")
+	}
+	fmt.Fprintln(w)
+
+	if g.Engine == config.EngineAuto {
+		fmt.Fprintln(w, "\nfixe com `devm service engine docker` ou `devm service engine podman`")
+	}
+	return nil
 }

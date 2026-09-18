@@ -123,6 +123,7 @@ Serviços:
   service stop     para um serviço, preservando os dados
   service logs     mostra os logs de um serviço
   service remove   remove o contêiner (--data apaga também os dados)
+  service engine   mostra ou fixa o runtime (auto, podman, docker)
 
 Editor:
   ide        aponta as extensões do editor para o PHP do projeto

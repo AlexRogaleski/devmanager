@@ -97,15 +97,37 @@ func (m *Manager) CriarBanco(ctx context.Context, spec Spec, nome string) error 
 		return fmt.Errorf("nome de banco inválido: %q", nome)
 	}
 
-	switch spec.Banco {
-	case BancoPostgres:
-		return m.criarBancoPostgres(ctx, spec, nome)
-	case BancoMySQL:
-		return m.criarBancoMySQL(ctx, spec, nome, "mysql")
-	case BancoMariaDB:
-		return m.criarBancoMySQL(ctx, spec, nome, "mariadb")
+	criar := func() error {
+		switch spec.Banco {
+		case BancoPostgres:
+			return m.criarBancoPostgres(ctx, spec, nome)
+		case BancoMySQL:
+			return m.criarBancoMySQL(ctx, spec, nome, "mysql")
+		case BancoMariaDB:
+			return m.criarBancoMySQL(ctx, spec, nome, "mariadb")
+		}
+		return nil
 	}
-	return nil
+
+	// Rede de segurança sobre a sonda de prontidão. Mesmo com a checagem por
+	// TCP, a primeira subida de um banco passa por reinícios internos, e uma
+	// falha momentânea aqui não deveria derrubar o `devm up` inteiro depois
+	// de já ter baixado a imagem e inicializado o cluster.
+	var ultimo error
+	for tentativa := 1; tentativa <= 5; tentativa++ {
+		if err := criar(); err == nil {
+			return nil
+		} else {
+			ultimo = err
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Duration(tentativa) * time.Second):
+		}
+	}
+	return ultimo
 }
 
 func (m *Manager) criarBancoPostgres(ctx context.Context, spec Spec, nome string) error {

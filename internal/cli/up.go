@@ -150,7 +150,7 @@ func servicosSilencioso(p *project.Project) *services.Manager {
 		return nil
 	}
 
-	engine, err := services.Detectar(context.Background())
+	engine, err := services.DetectarConfigurado(context.Background())
 	if err != nil {
 		return nil
 	}

@@ -49,6 +49,18 @@ type Definicao struct {
 	// quando o serviço está pronto: um PostgreSQL recém-criado leva alguns
 	// segundos inicializando o cluster, e um CREATE DATABASE nesse intervalo
 	// falha com "connection refused".
+	//
+	// As sondas de banco checam por TCP (-h 127.0.0.1), nunca pelo socket
+	// Unix, e isso NÃO é detalhe. As imagens oficiais de PostgreSQL e MySQL
+	// sobem um servidor TEMPORÁRIO durante a inicialização para rodar os
+	// scripts de init, e ele escuta apenas no socket local. Uma sonda por
+	// socket aprova esse servidor provisório; o comando seguinte então
+	// esbarra no desligamento dele:
+	//
+	//	FATAL: the database system is shutting down
+	//
+	// O listener TCP só aparece quando o servidor definitivo sobe — por isso
+	// ele é o sinal certo.
 	Prontidao []string
 
 	// Descricao aparece no `devm service catalog`.
@@ -75,7 +87,7 @@ var catalogo = map[string]Definicao{
 		},
 		VolumeInterno: "/var/lib/postgresql/data",
 		Banco:         BancoPostgres,
-		Prontidao:     []string{"pg_isready", "-U", "laravel", "-d", "postgres", "-q"},
+		Prontidao:     []string{"pg_isready", "-h", "127.0.0.1", "-U", "laravel", "-d", "postgres", "-q"},
 		Descricao:     "banco de dados PostgreSQL",
 	},
 	"mysql": {
@@ -91,7 +103,7 @@ var catalogo = map[string]Definicao{
 		},
 		VolumeInterno: "/var/lib/mysql",
 		Banco:         BancoMySQL,
-		Prontidao:     []string{"mysqladmin", "ping", "-uroot", "-psecret", "--silent"},
+		Prontidao:     []string{"mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-psecret", "--silent"},
 		Descricao:     "banco de dados MySQL",
 	},
 	"mariadb": {
@@ -107,7 +119,7 @@ var catalogo = map[string]Definicao{
 		},
 		VolumeInterno: "/var/lib/mysql",
 		Banco:         BancoMariaDB,
-		Prontidao:     []string{"mariadb-admin", "ping", "-uroot", "-psecret", "--silent"},
+		Prontidao:     []string{"mariadb-admin", "ping", "-h", "127.0.0.1", "-uroot", "-psecret", "--silent"},
 		Descricao:     "banco de dados MariaDB",
 	},
 	"redis": {

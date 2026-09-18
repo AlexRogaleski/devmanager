@@ -15,6 +15,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/AlexRogaleski/devmanager/internal/config"
 )
 
 // Engine descreve um runtime de contêiner concreto e suas peculiaridades.
@@ -50,19 +52,46 @@ type Engine struct {
 
 func (e *Engine) Nome() string { return e.Bin }
 
+// DetectarConfigurado detecta o engine respeitando a configuração do usuário.
+//
+// É o ponto de entrada que todo chamador deveria usar: ler a preferência em
+// cada lugar que precisa de um engine espalharia a mesma lógica por daemon,
+// CLI e testes, e um deles acabaria esquecendo.
+func DetectarConfigurado(ctx context.Context) (*Engine, error) {
+	g, err := config.LoadGlobal()
+	if err != nil {
+		return nil, err
+	}
+	return Detectar(ctx, g.Engine)
+}
+
 // Detectar encontra um runtime de contêiner utilizável.
 //
-// A ordem é deliberada: Podman primeiro. Ele roda rootless por padrão, o que
-// é o que torna a ferramenta viável em sistemas imutáveis sem pedir root —
-// um dos requisitos do projeto. Docker é a alternativa, não a preferência.
+// Com preferencia vazia ou "auto", a ordem é Podman antes de Docker: ele roda
+// rootless por padrão, o que torna a ferramenta viável em sistemas imutáveis
+// sem pedir root.
+//
+// Mas essa heurística erra num caso comum, e por isso a preferência existe:
+// quem tem podman instalado APENAS por causa do distrobox ou do toolbox, e
+// trabalha com docker. A presença do binário podman, nesses sistemas, não diz
+// nada sobre o que a pessoa usa — e escolher errado colocaria os serviços num
+// engine que ela nem abre, invisíveis no `docker ps` dela.
 //
 // Só a presença do binário não basta: o Docker precisa de um daemon rodando,
 // e um binário instalado com o serviço parado falharia depois, longe da causa.
 // Por isso perguntamos a versão ao engine, o que exige que ele responda.
-func Detectar(ctx context.Context) (*Engine, error) {
+func Detectar(ctx context.Context, preferencia string) (*Engine, error) {
 	var tentativas []string
 
-	for _, bin := range []string{"podman", "docker"} {
+	ordem := []string{"podman", "docker"}
+	switch preferencia {
+	case "podman":
+		ordem = []string{"podman"}
+	case "docker":
+		ordem = []string{"docker"}
+	}
+
+	for _, bin := range ordem {
 		caminho, err := exec.LookPath(bin)
 		if err != nil {
 			tentativas = append(tentativas, fmt.Sprintf("%s: não instalado", bin))
@@ -77,7 +106,7 @@ func Detectar(ctx context.Context) (*Engine, error) {
 		return e, nil
 	}
 
-	return nil, &EngineIndisponivelError{Tentativas: tentativas}
+	return nil, &EngineIndisponivelError{Tentativas: tentativas, Preferencia: preferencia}
 }
 
 func inspecionar(ctx context.Context, bin, caminho string) (*Engine, error) {
@@ -127,7 +156,8 @@ func ehRootless(ctx context.Context, caminho, bin string) bool {
 // se falta instalar, se o daemon está parado ou se o binário está quebrado.
 // Cada uma dessas situações tem uma correção diferente.
 type EngineIndisponivelError struct {
-	Tentativas []string
+	Tentativas  []string
+	Preferencia string
 }
 
 func (e *EngineIndisponivelError) Error() string {
@@ -136,6 +166,15 @@ func (e *EngineIndisponivelError) Error() string {
 	for _, t := range e.Tentativas {
 		b.WriteString("\n  " + t)
 	}
-	b.WriteString("\n\n  instale o podman (recomendado, roda sem root) ou o docker")
+
+	// Com preferência explícita, só um engine foi tentado. Dizer "instale o
+	// podman" a quem escolheu docker seria conselho errado.
+	if e.Preferencia == "podman" || e.Preferencia == "docker" {
+		b.WriteString("\n\n  a configuração exige " + e.Preferencia +
+			"\n  mude com `devm service engine auto` para tentar o outro")
+		return b.String()
+	}
+
+	b.WriteString("\n\n  instale o podman (roda sem root) ou o docker")
 	return b.String()
 }

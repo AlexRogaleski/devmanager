@@ -338,7 +338,7 @@ func TestDetectar(t *testing.T) {
 	// por isso prefixamos em vez de substituir.
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	e, err := Detectar(context.Background())
+	e, err := Detectar(context.Background(), "auto")
 	if err != nil {
 		t.Fatalf("Detectar falhou: %v", err)
 	}
@@ -353,10 +353,44 @@ func TestDetectar(t *testing.T) {
 	}
 }
 
+// Com preferência explícita, só o engine escolhido é tentado — e a mensagem
+// de erro não pode sugerir instalar o outro.
+func TestDetectarRespeitaPreferencia(t *testing.T) {
+	dir := t.TempDir()
+	falso := filepath.Join(dir, "podman")
+	if err := os.WriteFile(falso, []byte(scriptEngineFalso), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("FAKE_ESTADO", filepath.Join(dir, "estado"))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	// Preferindo docker, o podman falso presente no PATH é ignorado.
+	_, err := Detectar(context.Background(), "docker")
+	if err == nil {
+		t.Fatal("esperava erro: só o docker deveria ter sido tentado")
+	}
+	if strings.Contains(err.Error(), "podman:") {
+		t.Errorf("o podman não deveria ter sido tentado: %v", err)
+	}
+	if !strings.Contains(err.Error(), "devm service engine auto") {
+		t.Errorf("a mensagem deveria orientar como voltar ao automático: %v", err)
+	}
+
+	// Preferindo podman, ele é escolhido.
+	e, err := Detectar(context.Background(), "podman")
+	if err != nil {
+		t.Fatalf("Detectar com preferência podman falhou: %v", err)
+	}
+	if e.Bin != "podman" {
+		t.Errorf("Bin = %q", e.Bin)
+	}
+}
+
 func TestDetectarSemEngine(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
-	_, err := Detectar(context.Background())
+	_, err := Detectar(context.Background(), "auto")
 
 	var indisponivel *EngineIndisponivelError
 	if !errors.As(err, &indisponivel) {

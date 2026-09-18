@@ -206,7 +206,7 @@ func (s *Servidor) garantirServicos(
 		return nil
 	}
 
-	engine, err := services.Detectar(ctx)
+	engine, err := services.DetectarConfigurado(ctx)
 	if err != nil {
 		// Sem engine, seguimos sem os serviços: o ambiente ainda tem valor
 		// para um projeto que use SQLite, e o erro fica registrado no log
