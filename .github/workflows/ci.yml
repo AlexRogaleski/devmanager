@@ -11,6 +11,12 @@ on:
     tags: ['v*']
   pull_request:
 
+# O token começa somente-leitura. O job de release eleva para escrita, que é
+# o mínimo para criar a Release — dar escrita ao workflow inteiro sairia de
+# graça hoje e daria poder demais a qualquer passo acrescentado depois.
+permissions:
+  contents: read
+
 # Um push novo cancela a execução anterior do mesmo branch: sem isso, uma
 # sequência de commits enfileira builds que já nasceram obsoletos.
 concurrency:
@@ -61,3 +67,77 @@ jobs:
           name: devm-linux-amd64
           path: bin/devm
           if-no-files-found: error
+
+  # Publicação: só em tag, e só depois de a suíte passar.
+  #
+  # O `needs` é o ponto: sem ele os dois jobs correriam em paralelo e uma tag
+  # poderia publicar um binário reprovado nos testes, que é pior que não
+  # publicar nada.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verificar
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # A versão vem do nome da tag, e não do `git describe` que o Makefile
+      # usa por padrão: o checkout do Actions é raso e não traz tags, então o
+      # describe devolveria um hash — e a Release v0.1.0 conteria um binário
+      # que se apresenta como "a3f2e1b" no `devm version`.
+      - name: Compilar
+        run: make release VERSION=${{ github.ref_name }}
+
+      # As notas são escritas aqui, e não geradas pelo GitHub, por causa da
+      # última linha: um binário de macOS compilado e não testado precisa
+      # dizer isso a quem baixa.
+      - name: Notas da versão
+        run: |
+          # O heredoc é CITADO ('FIM'), então o shell não interpreta nada do
+          # que vem dentro. Isso não é preciosismo: o corpo é markdown, e
+          # markdown usa backtick, que sem as aspas o shell leria como
+          # substituição de comando — a tabela de arquivos saiu vazia
+          # exatamente assim, numa versão anterior deste passo.
+          #
+          # A URL aparece duas vezes por isso. O ${{ github.ref_name }} não
+          # precisa do shell: o Actions o substitui antes de o script rodar.
+          cat > dist/NOTAS.md <<'FIM'
+          Binário estático, sem dependências de sistema.
+
+              curl -LO https://github.com/AlexRogaleski/devmanager/releases/download/${{ github.ref_name }}/devm-linux-amd64
+              curl -LO https://github.com/AlexRogaleski/devmanager/releases/download/${{ github.ref_name }}/SHA256SUMS
+              sha256sum -c --ignore-missing SHA256SUMS
+              install -m 755 devm-linux-amd64 ~/.local/bin/devm
+              devm setup
+
+          A conferência do checksum está no meio da sequência, e não como
+          passo opcional no fim, porque baixar um executável de 14 MB e
+          instalá-lo sem verificar é o tipo de atalho que ninguém defende
+          quando perguntado.
+
+          | arquivo | plataforma |
+          |---|---|
+          | `devm-linux-amd64` | Linux x86-64 |
+          | `devm-linux-arm64` | Linux ARM64 |
+          | `devm-darwin-amd64` | macOS Intel |
+          | `devm-darwin-arm64` | macOS Apple Silicon |
+
+          Os binários de macOS são compilados a cada versão, mas **não
+          testados**: a suíte roda apenas em Linux, e a configuração
+          automática de DNS assume `systemd-resolved`.
+          FIM
+
+      - name: Publicar a Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            dist/devm-* dist/SHA256SUMS \
+            --title "${{ github.ref_name }}" \
+            --notes-file dist/NOTAS.md

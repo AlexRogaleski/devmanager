@@ -18,7 +18,7 @@ LDFLAGS := -X github.com/AlexRogaleski/devmanager/internal/cli.Version=$(VERSION
 # É a mesma propriedade que escolhemos para o PHP.
 HOST_BIN ?= $(HOME)/.local/bin/devm
 
-.PHONY: build install test race cover vet fmt cross clean static install-host
+.PHONY: build install test race cover vet fmt cross clean static install-host release
 
 ## build: compila o binário em ./bin/devm
 build:
@@ -73,6 +73,28 @@ install-host: static
 	@# só quando o proxy cair na porta alternativa custa caro.
 	@TINHA=$$(getcap $(HOST_BIN) 2>/dev/null | grep -c cap_net_bind_service || true); 	mkdir -p $(dir $(HOST_BIN)); 	install -m 0755 bin/devm $(HOST_BIN); 	echo; 	echo "instalado em $(HOST_BIN)"; 	if [ "$$TINHA" != "0" ]; then 		echo; 		echo "ATENÇÃO: o binário tinha cap_net_bind_service e a substituição apagou."; 		echo "para o proxy voltar às portas 80/443:"; 		echo "  sudo setcap 'cap_net_bind_service=+ep' $(HOST_BIN)"; 		echo "  devm daemon stop && devm daemon start"; 	fi
 
+## release: compila os binários de distribuição em ./dist
+##
+## Um runner Linux produz os quatro: sem cgo, o Go compila para macOS sem
+## toolchain externo, então não há motivo para gastar minutos de runner
+## macOS — que custam dez vezes mais.
+##
+## O -trimpath entra aqui e não no `static`: ele apaga os caminhos absolutos
+## de compilação embutidos no binário. Num binário local isso é indiferente;
+## num binário publicado, o rastro de pilha de um panic exporia a estrutura
+## de diretórios da máquina que compilou.
+release:
+	@rm -rf dist && mkdir -p dist
+	@for alvo in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do \
+		so=$${alvo%/*}; arch=$${alvo#*/}; \
+		printf '  %s/%s\n' "$$so" "$$arch"; \
+		CGO_ENABLED=0 GOOS=$$so GOARCH=$$arch go build -trimpath \
+			-ldflags "$(LDFLAGS)" -o dist/devm-$$so-$$arch ./cmd/devm || exit 1; \
+	done
+	@cd dist && sha256sum devm-* > SHA256SUMS
+	@echo
+	@ls -1sh dist/
+
 ## clean: remove artefatos de build
 clean:
-	rm -rf bin/
+	rm -rf bin/ dist/

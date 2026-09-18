@@ -34,9 +34,25 @@ ajuste de configuração.
 
 - Linux com `systemd-resolved` (para os domínios `.test`)
 - Docker **ou** Podman (para os serviços)
-- Go 1.26+ (apenas para compilar)
 
 ## Instalação
+
+O binário é estático e não depende de glibc, Go nem nada instalado no sistema.
+Baixe o da última versão:
+
+```sh
+curl -LO https://github.com/AlexRogaleski/devmanager/releases/latest/download/devm-linux-amd64
+curl -LO https://github.com/AlexRogaleski/devmanager/releases/latest/download/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+install -m 755 devm-linux-amd64 ~/.local/bin/devm
+```
+
+Há binários para Linux e macOS, amd64 e arm64. Os de macOS são compilados a
+cada versão, mas não testados.
+
+### Compilando do código
+
+Precisa de Go 1.26+:
 
 ```sh
 git clone https://github.com/AlexRogaleski/devmanager
@@ -44,8 +60,8 @@ cd devmanager
 make install-host
 ```
 
-Instala um binário estático em `~/.local/bin/devm`, que roda em qualquer Linux
-independente da versão da glibc.
+É o caminho de quem vai mexer no código: o build incremental leva menos de um
+segundo, e `make install-host` já coloca o resultado em `~/.local/bin/devm`.
 
 ### Configuração da máquina
 
@@ -272,12 +288,14 @@ make test    # suíte
 make race    # com detector de corrida (precisa de gcc)
 make cover   # cobertura por pacote
 make vet fmt
-make cross   # confirma linux e macOS, amd64 e arm64
+make cross    # confirma linux e macOS, amd64 e arm64
+make release # os quatro binários de distribuição em ./dist
 ```
 
 O código é comentado em português, explicando por que cada decisão foi tomada
-— não o que a linha faz. O CI roda esses mesmos alvos, mais o `make static`, e
-publica o binário como artefato; os testes rodam apenas em Linux.
+— não o que a linha faz. O CI roda esses mesmos alvos, mais o `make static`, e publica o binário como
+artefato; os testes rodam apenas em Linux. Uma tag `v*` dispara o `make
+release` e cria a Release no GitHub — só depois de a suíte passar.
 
 ## Limitações conhecidas
 
