@@ -68,14 +68,49 @@ jobs:
           path: bin/devm
           if-no-files-found: error
 
+  # O mesmo código num Mac de verdade.
+  #
+  # O binário de macOS é publicado a cada versão, e até aqui nunca tinha
+  # rodado num: compilava pelo `make cross`, mas nenhum teste rodava lá. O
+  # runner é Apple Silicon, então o darwin/arm64 sai testado; o darwin/amd64
+  # continua só compilado.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Testes
+        run: make test
+
+      - name: Detector de corrida
+        run: make race
+
+      - name: Compilar
+        run: make build
+
+      # A suíte cobre a lógica; isto cobre o sistema. O runner tem sudo sem
+      # senha, então o `devm setup --apply` configura /etc/resolver e o
+      # Keychain de verdade, e o script confere pelos caminhos de um
+      # navegador. Também baixa o PHP e o Node de macOS e confere os drivers
+      # — os dois só tinham sido testados em Linux.
+      - name: Verificação de ponta a ponta
+        timeout-minutes: 10
+        run: .github/scripts/verificar-macos.sh
+
   # Publicação: só em tag, e só depois de a suíte passar.
   #
-  # O `needs` é o ponto: sem ele os dois jobs correriam em paralelo e uma tag
+  # O `needs` é o ponto: sem ele os jobs correriam em paralelo e uma tag
   # poderia publicar um binário reprovado nos testes, que é pior que não
-  # publicar nada.
+  # publicar nada. Os dois sistemas precisam passar, porque os dois são
+  # publicados.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: verificar
+    needs: [verificar, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -95,8 +130,8 @@ jobs:
         run: make release VERSION=${{ github.ref_name }}
 
       # As notas são escritas aqui, e não geradas pelo GitHub, por causa da
-      # última linha: um binário de macOS compilado e não testado precisa
-      # dizer isso a quem baixa.
+      # última linha: um binário compilado e não testado — hoje, o de macOS
+      # Intel — precisa dizer isso a quem baixa.
       - name: Notas da versão
         run: |
           # O heredoc é CITADO ('FIM'), então o shell não interpreta nada do
@@ -128,9 +163,9 @@ jobs:
           | `devm-darwin-amd64` | macOS Intel |
           | `devm-darwin-arm64` | macOS Apple Silicon |
 
-          Os binários de macOS são compilados a cada versão, mas **não
-          testados**: a suíte roda apenas em Linux, e a configuração
-          automática de DNS assume `systemd-resolved`.
+          O de macOS Apple Silicon passa pela suíte e por uma verificação
+          de ponta a ponta num Mac a cada versão. O de macOS Intel é
+          compilado, mas não testado.
           FIM
 
       - name: Publicar a Release
