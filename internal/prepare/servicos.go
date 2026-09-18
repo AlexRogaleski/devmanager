@@ -164,19 +164,32 @@ func envJaAponta(p *project.Project, spec services.Spec) bool {
 		return false
 	}
 
-	// A PORTA entra em todas as checagens, e não é zelo: sem ela, um .env com
-	// host certo e porta vazia era considerado configurado, e o passo nunca
-	// rodava de novo para corrigir. Foi o que aconteceu com o MAIL_PORT do
-	// segundo projeto a reaproveitar o mailpit.
+	// A checagem precisa olhar algo que SÓ NÓS escreveríamos.
+	//
+	// Duas armadilhas já morderam aqui. A primeira: sem conferir a porta, um
+	// .env com host certo e porta vazia passava como configurado. A segunda,
+	// pior: o instalador do Laravel escreve DB_CONNECTION, DB_PORT e
+	// DB_DATABASE com exatamente os valores que esperávamos — e a checagem
+	// concluía "já configurado" por coincidência, pulando a criação do banco
+	// e deixando as credenciais do instalador (root, senha vazia) no lugar.
+	//
+	// O usuário do serviço é o discriminador: ele vem do nosso catálogo e
+	// nenhuma outra ferramenta o escreveria.
 	switch spec.Nome {
 	case "postgres":
 		return atual["DB_CONNECTION"] == "pgsql" &&
 			atual["DB_DATABASE"] == services.NomeDeBanco(p.Name) &&
-			atual["DB_PORT"] != ""
+			atual["DB_PORT"] != "" &&
+			atual["DB_USERNAME"] == spec.Env["POSTGRES_USER"]
 	case "mysql", "mariadb":
+		usuario := spec.Env["MYSQL_USER"]
+		if usuario == "" {
+			usuario = spec.Env["MARIADB_USER"]
+		}
 		return atual["DB_CONNECTION"] == "mysql" &&
 			atual["DB_DATABASE"] == services.NomeDeBanco(p.Name) &&
-			atual["DB_PORT"] != ""
+			atual["DB_PORT"] != "" &&
+			atual["DB_USERNAME"] == usuario
 	case "redis":
 		return atual["REDIS_HOST"] == "127.0.0.1" &&
 			atual["REDIS_PREFIX"] != "" &&

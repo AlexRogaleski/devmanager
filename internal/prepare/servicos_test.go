@@ -234,7 +234,12 @@ func TestEnvJaAponta(t *testing.T) {
 		t.Error("sem DB_PORT não deveria contar como configurado")
 	}
 
-	if _, err := dotenv.Set(envPath, map[string]string{"DB_PORT": "5432"}); err != nil {
+	// O usuário do serviço é o que discrimina a nossa configuração da de
+	// outra ferramenta — ver TestEnvJaApontaExigeOUsuarioDoServico.
+	if _, err := dotenv.Set(envPath, map[string]string{
+		"DB_PORT":     "5432",
+		"DB_USERNAME": spec.Env["POSTGRES_USER"],
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if !envJaAponta(p, spec) {
@@ -293,5 +298,48 @@ func TestEnvJaApontaExigeAPorta(t *testing.T) {
 				t.Errorf("envJaAponta = %v, esperava %v (valores: %v)", got, c.querOK, c.valores)
 			}
 		})
+	}
+}
+
+// Regressão: o instalador do Laravel escreve DB_CONNECTION, DB_PORT e
+// DB_DATABASE com exatamente os valores que esperávamos, e a checagem
+// concluía "já configurado" POR COINCIDÊNCIA — pulando a criação do banco e
+// deixando as credenciais do instalador (root, senha vazia) no .env.
+func TestEnvJaApontaExigeOUsuarioDoServico(t *testing.T) {
+	p := projetoEm(t, map[string]string{
+		"composer.json":   `{"require":{"laravel/framework":"^12.0"}}`,
+		"artisan":         "#!/usr/bin/env php",
+		"devmanager.yaml": "services:\n  - mysql\n",
+	})
+
+	spec, err := services.ParseSpec("mysql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	envPath := filepath.Join(p.Path, ".env")
+
+	// Exatamente o que o instalador do Laravel deixa.
+	if _, err := dotenv.Set(envPath, map[string]string{
+		"DB_CONNECTION": "mysql",
+		"DB_HOST":       "127.0.0.1",
+		"DB_PORT":       "3306",
+		"DB_DATABASE":   services.NomeDeBanco(p.Name),
+		"DB_USERNAME":   "root",
+		"DB_PASSWORD":   "",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if envJaAponta(p, spec) {
+		t.Error("credenciais do instalador não podem passar como configuração nossa")
+	}
+
+	// Com o usuário do nosso catálogo, aí sim.
+	if _, err := dotenv.Set(envPath, map[string]string{
+		"DB_USERNAME": spec.Env["MYSQL_USER"],
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !envJaAponta(p, spec) {
+		t.Error("com o usuário do serviço, deveria contar como configurado")
 	}
 }

@@ -36,6 +36,8 @@ func Run(args []string, stdio IO) error {
 	comando, resto := args[0], args[1:]
 
 	switch comando {
+	case "new":
+		return newCmd(stdio, resto)
 	case "detect":
 		return detectCmd(stdio.Out, resto)
 	case "php":
@@ -107,6 +109,7 @@ Uso:
   devm <comando> [argumentos]
 
 Projetos:
+  new        cria um projeto Laravel do zero
   list       lista os projetos registrados e o estado de cada um
   add        registra um projeto
   scan       registra todos os projetos de um diretório

@@ -66,6 +66,61 @@ func SetChave(dir, chave, valor string) error {
 	return escreverAtomico(caminho, saida)
 }
 
+// SetLista grava uma chave com valores em sequência.
+//
+// Usada para services, que é uma lista. Compartilha a disciplina do
+// SetChave: edita pelo yaml.Node, preservando comentários e demais chaves.
+func SetLista(dir, chave string, valores []string) error {
+	caminho := Path(dir)
+
+	dados, err := os.ReadFile(caminho)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("lendo %s: %w", caminho, err)
+	}
+
+	var doc yaml.Node
+	if len(dados) > 0 {
+		if err := yaml.Unmarshal(dados, &doc); err != nil {
+			return fmt.Errorf("%s inválido: %w", caminho, err)
+		}
+	}
+
+	mapa, err := mapaRaiz(&doc)
+	if err != nil {
+		return fmt.Errorf("%s: %w", caminho, err)
+	}
+	definirSequencia(mapa, chave, valores)
+
+	saida, err := serializar(&doc)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(caminho), 0o755); err != nil {
+		return fmt.Errorf("criando %s: %w", filepath.Dir(caminho), err)
+	}
+	return escreverAtomico(caminho, saida)
+}
+
+// definirSequencia cria ou substitui uma chave de lista.
+func definirSequencia(mapa *yaml.Node, chave string, valores []string) {
+	seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	for _, v := range valores {
+		seq.Content = append(seq.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v})
+	}
+
+	for i := 0; i+1 < len(mapa.Content); i += 2 {
+		if mapa.Content[i].Value == chave {
+			mapa.Content[i+1] = seq
+			return
+		}
+	}
+
+	mapa.Content = append(mapa.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: chave},
+		seq,
+	)
+}
+
 // removerChaveDoArquivo tira uma chave, apagando o arquivo se ele ficar vazio.
 func removerChaveDoArquivo(dir, chave string) error {
 	caminho := Path(dir)

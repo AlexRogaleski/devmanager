@@ -69,6 +69,25 @@ Autoridades → Importar**, marcando "confiar para identificar sites".
 
 ## Uso
 
+### Criar um projeto novo
+
+```sh
+devm new minha-app                          # instalador do Laravel, interativo
+devm new minha-app --php 8.4 --database mysql
+devm new minha-app -- --react -n            # tudo após -- vai para o instalador
+devm new minha-app --plain                  # composer create-project
+```
+
+Resolve o problema do ovo e da galinha: os demais comandos encontram o projeto
+pela pasta atual, e numa pasta vazia não há projeto. O `devm new` monta um
+ambiente temporário com PHP e composer, chama o instalador do Laravel — que
+roda no PHP escolhido, não no do sistema — e no fim escreve o
+`devmanager.yaml` e registra o projeto.
+
+`--database` faz duas coisas: passa a escolha ao instalador e declara o
+serviço correspondente no `devmanager.yaml`, para que o `devm up` seguinte
+suba o banco e o crie.
+
 ### Configurar um projeto
 
 Crie um `devmanager.yaml` na raiz e versione junto com o código:
