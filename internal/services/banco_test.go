@@ -193,3 +193,50 @@ func TestAjustarPortasLivresNaoMuda(t *testing.T) {
 		t.Errorf("notas = %v, esperava nenhuma", notas)
 	}
 }
+
+// Regressão: a leitura de portas do engine não traz rótulos, e um serviço de
+// várias portas perdia a identificação quando um SEGUNDO projeto o
+// reaproveitava. O sintoma foi um MAIL_PORT vazio no .env do segundo projeto.
+func TestRotularPortasRecuperaOsRotulos(t *testing.T) {
+	// Como o comando `port` reporta: sem rótulo.
+	lidas := []Porta{
+		{Host: 36527, Interna: 8025},
+		{Host: 35097, Interna: 1025},
+	}
+
+	rotuladas := rotularPortas("mailpit", lidas)
+
+	rotulos := map[int]string{}
+	for _, p := range rotuladas {
+		rotulos[p.Interna] = p.Rotulo
+	}
+	if rotulos[1025] != "smtp" {
+		t.Errorf("porta 1025 = %q, esperava smtp", rotulos[1025])
+	}
+	if rotulos[8025] != "web" {
+		t.Errorf("porta 8025 = %q, esperava web", rotulos[8025])
+	}
+
+	// A porta do HOST precisa ser preservada: é ela que vai para o .env.
+	for _, p := range rotuladas {
+		if p.Interna == 1025 && p.Host != 35097 {
+			t.Errorf("porta do host = %d, esperava 35097", p.Host)
+		}
+	}
+}
+
+func TestRotularPortasNaoSobrescreveOQueJaTemRotulo(t *testing.T) {
+	entrada := []Porta{{Host: 1, Interna: 1025, Rotulo: "personalizado"}}
+
+	if got := rotularPortas("mailpit", entrada)[0].Rotulo; got != "personalizado" {
+		t.Errorf("Rotulo = %q, esperava preservar o existente", got)
+	}
+}
+
+func TestRotularPortasDeServicoDesconhecido(t *testing.T) {
+	entrada := []Porta{{Host: 1, Interna: 2}}
+
+	if got := rotularPortas("inexistente", entrada); len(got) != 1 {
+		t.Errorf("serviço fora do catálogo deveria passar as portas intactas: %v", got)
+	}
+}

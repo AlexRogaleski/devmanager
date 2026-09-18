@@ -164,15 +164,27 @@ func envJaAponta(p *project.Project, spec services.Spec) bool {
 		return false
 	}
 
+	// A PORTA entra em todas as checagens, e não é zelo: sem ela, um .env com
+	// host certo e porta vazia era considerado configurado, e o passo nunca
+	// rodava de novo para corrigir. Foi o que aconteceu com o MAIL_PORT do
+	// segundo projeto a reaproveitar o mailpit.
 	switch spec.Nome {
 	case "postgres":
-		return atual["DB_CONNECTION"] == "pgsql" && atual["DB_DATABASE"] == services.NomeDeBanco(p.Name)
+		return atual["DB_CONNECTION"] == "pgsql" &&
+			atual["DB_DATABASE"] == services.NomeDeBanco(p.Name) &&
+			atual["DB_PORT"] != ""
 	case "mysql", "mariadb":
-		return atual["DB_CONNECTION"] == "mysql" && atual["DB_DATABASE"] == services.NomeDeBanco(p.Name)
+		return atual["DB_CONNECTION"] == "mysql" &&
+			atual["DB_DATABASE"] == services.NomeDeBanco(p.Name) &&
+			atual["DB_PORT"] != ""
 	case "redis":
-		return atual["REDIS_HOST"] == "127.0.0.1" && atual["REDIS_PREFIX"] != ""
+		return atual["REDIS_HOST"] == "127.0.0.1" &&
+			atual["REDIS_PREFIX"] != "" &&
+			atual["REDIS_PORT"] != ""
 	case "mailpit":
-		return atual["MAIL_HOST"] == "127.0.0.1" && atual["MAIL_MAILER"] == "smtp"
+		return atual["MAIL_HOST"] == "127.0.0.1" &&
+			atual["MAIL_MAILER"] == "smtp" &&
+			atual["MAIL_PORT"] != ""
 	}
 	return false
 }

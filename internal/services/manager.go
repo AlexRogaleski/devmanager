@@ -81,7 +81,7 @@ func (m *Manager) List(ctx context.Context) ([]Servico, error) {
 			// Só dá para perguntar as portas de um contêiner rodando; para
 			// um parado, ficamos com as do catálogo como aproximação.
 			if portas := m.portasReais(ctx, nome); len(portas) > 0 {
-				s.Portas = portas
+				s.Portas = rotularPortas(s.Nome, portas)
 			}
 		}
 		servicos = append(servicos, s)
@@ -122,7 +122,7 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (Servico, error) {
 		s := servicoDoNome(spec.Container())
 		s.Estado = EstadoRodando
 		if portas := m.portasReais(ctx, spec.Container()); len(portas) > 0 {
-			s.Portas = portas
+			s.Portas = rotularPortas(s.Nome, portas)
 		}
 		return s, nil
 
@@ -135,7 +135,7 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (Servico, error) {
 		s := servicoDoNome(spec.Container())
 		s.Estado = EstadoRodando
 		if portas := m.portasReais(ctx, spec.Container()); len(portas) > 0 {
-			s.Portas = portas
+			s.Portas = rotularPortas(s.Nome, portas)
 		}
 		return s, nil
 	}
@@ -306,6 +306,37 @@ func portaLivre(porta int) error {
 // formato nas duas engines:
 //
 //	5432/tcp -> 127.0.0.1:5433
+//
+// rotularPortas devolve os rótulos que a leitura do engine não traz.
+//
+// O comando `port` reporta apenas o par porta-interna → porta-do-host; ele não
+// sabe que a 1025 do mailpit é SMTP e a 8025 é a interface web. Casando pela
+// porta INTERNA — que é fixa na imagem — recuperamos o rótulo do catálogo.
+//
+// Sem isto, um serviço de várias portas perdia a identificação assim que um
+// segundo projeto o reaproveitava em vez de criá-lo: o primeiro projeto
+// recebia MAIL_PORT correto e o segundo recebia vazio.
+func rotularPortas(nomeServico string, portas []Porta) []Porta {
+	def, ok := catalogo[nomeServico]
+	if !ok {
+		return portas
+	}
+
+	rotulos := make(map[int]string, len(def.Portas))
+	for _, p := range def.Portas {
+		rotulos[p.Interna] = p.Rotulo
+	}
+
+	saida := make([]Porta, len(portas))
+	copy(saida, portas)
+	for i := range saida {
+		if saida[i].Rotulo == "" {
+			saida[i].Rotulo = rotulos[saida[i].Interna]
+		}
+	}
+	return saida
+}
+
 func (m *Manager) portasReais(ctx context.Context, container string) []Porta {
 	saida, err := m.capturar(ctx, "port", container)
 	if err != nil {

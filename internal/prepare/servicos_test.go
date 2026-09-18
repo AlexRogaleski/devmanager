@@ -223,13 +223,75 @@ func TestEnvJaAponta(t *testing.T) {
 		t.Error(".env sem as chaves de banco não deveria contar")
 	}
 
+	// Sem a porta ainda não conta: é a correção do MAIL_PORT vazio.
 	if _, err := dotenv.Set(envPath, map[string]string{
 		"DB_CONNECTION": "pgsql",
 		"DB_DATABASE":   services.NomeDeBanco(p.Name),
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if envJaAponta(p, spec) {
+		t.Error("sem DB_PORT não deveria contar como configurado")
+	}
+
+	if _, err := dotenv.Set(envPath, map[string]string{"DB_PORT": "5432"}); err != nil {
+		t.Fatal(err)
+	}
 	if !envJaAponta(p, spec) {
-		t.Error("com as chaves corretas, deveria contar como configurado")
+		t.Error("com todas as chaves, deveria contar como configurado")
+	}
+}
+
+// Regressão: um .env com host correto e PORTA VAZIA era considerado
+// configurado, e o passo nunca rodava de novo para corrigir. O sintoma foi
+// o MAIL_PORT vazio no segundo projeto a reaproveitar o mailpit.
+func TestEnvJaApontaExigeAPorta(t *testing.T) {
+	casos := []struct {
+		servico string
+		valores map[string]string
+		querOK  bool
+	}{
+		{
+			servico: "mailpit",
+			valores: map[string]string{"MAIL_HOST": "127.0.0.1", "MAIL_MAILER": "smtp"},
+			querOK:  false, // sem MAIL_PORT
+		},
+		{
+			servico: "mailpit",
+			valores: map[string]string{"MAIL_HOST": "127.0.0.1", "MAIL_MAILER": "smtp", "MAIL_PORT": "1025"},
+			querOK:  true,
+		},
+		{
+			servico: "redis",
+			valores: map[string]string{"REDIS_HOST": "127.0.0.1", "REDIS_PREFIX": "app_"},
+			querOK:  false, // sem REDIS_PORT
+		},
+		{
+			servico: "mysql",
+			valores: map[string]string{"DB_CONNECTION": "mysql", "DB_DATABASE": "app"},
+			querOK:  false, // sem DB_PORT
+		},
+	}
+
+	for _, c := range casos {
+		t.Run(c.servico, func(t *testing.T) {
+			p := projetoEm(t, map[string]string{
+				"composer.json":   `{"require":{"laravel/framework":"^12.0"}}`,
+				"artisan":         "#!/usr/bin/env php",
+				"devmanager.yaml": "services:\n  - " + c.servico + "\n",
+			})
+
+			if _, err := dotenv.Set(filepath.Join(p.Path, ".env"), c.valores); err != nil {
+				t.Fatal(err)
+			}
+
+			spec, err := services.ParseSpec(c.servico)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := envJaAponta(p, spec); got != c.querOK {
+				t.Errorf("envJaAponta = %v, esperava %v (valores: %v)", got, c.querOK, c.valores)
+			}
+		})
 	}
 }
