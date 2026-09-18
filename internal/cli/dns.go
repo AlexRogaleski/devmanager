@@ -85,8 +85,10 @@ func dnsStatusCmd(w io.Writer, args []string) error {
 	fmt.Fprintf(w, "servidor     %s\n", simNao(ativo, motivo))
 	fmt.Fprintf(w, "endereço     %s\n", endereco)
 	fmt.Fprintf(w, "domínio      .%s\n", tld)
-	fmt.Fprintf(w, "resolved     %s\n", simNao(estado.ResolvedAtivo, ""))
-	fmt.Fprintf(w, "configurado  %s\n", simNao(estado.Configurado, ""))
+	if estado.Suportado {
+		fmt.Fprintf(w, "mecanismo    %s  (%s)\n", estado.Mecanismo, simNao(estado.MecanismoAtivo, ""))
+		fmt.Fprintf(w, "configurado  %s  (%s)\n", simNao(estado.Configurado, ""), estado.Arquivo)
+	}
 
 	// O que realmente importa é o nome RESOLVER. Arquivo gravado sem o
 	// restart do resolved não faz nada, e reportar "configurado" nesse
@@ -102,7 +104,7 @@ func dnsStatusCmd(w io.Writer, args []string) error {
 		fmt.Fprintf(w, "\n%s\n", estado.Motivo)
 		return nil
 	}
-	if !estado.ResolvedAtivo {
+	if !estado.MecanismoAtivo {
 		fmt.Fprintf(w, "\n%s — a configuração automática precisa dele\n", estado.Motivo)
 		return nil
 	}
@@ -156,12 +158,19 @@ func dnsInstallCmd(w io.Writer, args []string) error {
 	if !estado.Suportado {
 		return fmt.Errorf("%s", estado.Motivo)
 	}
-	if !estado.ResolvedAtivo {
-		return fmt.Errorf("systemd-resolved não está ativo — a configuração automática depende dele")
+	if !estado.MecanismoAtivo {
+		return fmt.Errorf("%s — a configuração automática depende dele", estado.Motivo)
+	}
+
+	comandos, err := devmdns.ComandosDeInstalacao(endereco, tld)
+	if err != nil {
+		return err
 	}
 
 	fmt.Fprintf(w, "para resolver os domínios .%s, rode:\n\n", tld)
-	fmt.Fprint(w, devmdns.ComandosDeInstalacao(endereco, tld))
+	for _, c := range comandos {
+		fmt.Fprintln(w, c)
+	}
 	fmt.Fprintf(w, "\ndepois confira com `devm dns status`\n")
 	return nil
 }
@@ -174,7 +183,19 @@ func dnsUninstallCmd(w io.Writer, args []string) error {
 		return err
 	}
 
+	_, tld, _, _, err := infoDNS(context.Background())
+	if err != nil {
+		return err
+	}
+
+	comandos, err := devmdns.ComandosDeRemocao(tld)
+	if err != nil {
+		return err
+	}
+
 	fmt.Fprint(w, "para desfazer a configuração de DNS, rode:\n\n")
-	fmt.Fprint(w, devmdns.ComandosDeRemocao())
+	for _, c := range comandos {
+		fmt.Fprintln(w, c)
+	}
 	return nil
 }

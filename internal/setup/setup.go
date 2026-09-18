@@ -89,12 +89,20 @@ func passoDNS(ctx context.Context, endereco, tld string) Passo {
 		p.Detalhe = estado.Motivo
 		return p
 	}
-	if !estado.ResolvedAtivo {
-		p.Detalhe = "systemd-resolved não está ativo; configure o DNS manualmente"
+	if !estado.MecanismoAtivo {
+		p.Detalhe = estado.Motivo + "; configure o DNS manualmente"
 		return p
 	}
 
-	p.Comandos = strings.Split(strings.TrimSpace(devmdns.ComandosDeInstalacao(endereco, tld)), "\n")
+	// A lista já vem com um comando por elemento. Ela era montada dividindo
+	// um texto por linha, o que partia um heredoc em pedaços executados
+	// separadamente pelo --apply.
+	comandos, err := devmdns.ComandosDeInstalacao(endereco, tld)
+	if err != nil {
+		p.Detalhe = err.Error()
+		return p
+	}
+	p.Comandos = comandos
 	return p
 }
 

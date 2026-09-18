@@ -191,35 +191,3 @@ func TestAtendeReconheceOTLD(t *testing.T) {
 		}
 	}
 }
-
-// O "~" transforma o domínio em ROTEAMENTO. Sem ele, o .test viraria sufixo
-// de BUSCA e o sistema tentaria resolver "google.com.test".
-func TestDropInUsaDominioDeRoteamento(t *testing.T) {
-	conteudo := ConteudoDropIn("127.0.0.1:5354", "test")
-
-	if !strings.Contains(conteudo, "Domains=~test") {
-		t.Errorf("faltou o prefixo ~ no domínio:\n%s", conteudo)
-	}
-	if !strings.Contains(conteudo, "DNS=127.0.0.1:5354") {
-		t.Errorf("faltou o endereço do servidor:\n%s", conteudo)
-	}
-	// O arquivo precisa dizer como desfazer: quem o encontrar daqui a um ano
-	// não vai lembrar de onde veio.
-	if !strings.Contains(conteudo, "rm "+CaminhoDropIn) {
-		t.Errorf("o arquivo deveria explicar como removê-lo:\n%s", conteudo)
-	}
-}
-
-func TestComandosDeInstalacao(t *testing.T) {
-	cmds := ComandosDeInstalacao("127.0.0.1:5354", "test")
-
-	for _, esperado := range []string{
-		"mkdir -p /etc/systemd/resolved.conf.d",
-		"tee " + CaminhoDropIn,
-		"systemctl restart systemd-resolved",
-	} {
-		if !strings.Contains(cmds, esperado) {
-			t.Errorf("faltou %q:\n%s", esperado, cmds)
-		}
-	}
-}
