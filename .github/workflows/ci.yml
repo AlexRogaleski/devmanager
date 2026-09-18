@@ -1,0 +1,63 @@
+# Integração contínua do Dev Manager.
+#
+# Os alvos são os mesmos do Makefile, de propósito: o que roda aqui é o que
+# você roda na sua máquina. CI que executa comandos próprios vira uma segunda
+# definição de "está certo", e as duas divergem.
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+# Um push novo cancela a execução anterior do mesmo branch: sem isso, uma
+# sequência de commits enfileira builds que já nasceram obsoletos.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # A versão vem do go.mod, não fixada aqui. Duas fontes da verdade para
+      # a versão do Go é como se descobre, meses depois, que o CI compila com
+      # uma e o desenvolvimento com outra.
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Formatação
+        run: make fmt
+
+      - name: Análise estática
+        run: make vet
+
+      - name: Testes
+        run: make test
+
+      # O detector de corrida precisa de cgo, e por isso não entra no alvo
+      # padrão: numa máquina sem gcc ele falharia por motivo nenhum. No CI,
+      # onde o gcc existe, ele é a única defesa automática contra as corridas
+      # do supervisor e do anel de logs.
+      - name: Detector de corrida
+        run: make race
+
+      - name: Compilação cruzada
+        run: make cross
+
+      # O binário publicado é estático: sem cgo ele não depende da glibc da
+      # distro, que é o que permite rodar o mesmo arquivo num Fedora imutável,
+      # num Ubuntu e num contêiner.
+      - name: Binário estático
+        run: make static
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devm-linux-amd64
+          path: bin/devm
+          if-no-files-found: error

@@ -1,5 +1,8 @@
 # Dev Manager
 
+[![CI](https://github.com/AlexRogaleski/devmanager/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexRogaleski/devmanager/actions/workflows/ci.yml)
+[![Licença MIT](https://img.shields.io/badge/licença-MIT-blue.svg)](LICENSE)
+
 Ambiente de desenvolvimento local para projetos Laravel/PHP, sem um contêiner
 por projeto.
 
@@ -159,6 +162,7 @@ Se a porta oficial estiver ocupada, outra livre é escolhida e **anunciada**.
 devm php list       # instalados
 devm php available  # instaláveis
 devm php install 8.3
+devm php remove 8.3.32
 devm php which "^8.2"
 ```
 
@@ -176,12 +180,29 @@ O build padrão é o `bulk`: drivers de MySQL, PostgreSQL e SQLite, mais `intl`,
 > falsamente que não existem. `PDO::getAvailableDrivers()` é a fonte correta —
 > esse engano custou uma escolha errada de variante padrão neste projeto.
 
+O `devm php list` mostra quanto cada instalação ocupa, e o `devm php remove`
+apaga as que não servem mais. Só as baixadas pelo Dev Manager: o PHP da distro
+aparece na listagem mas não é candidato a remoção — quem o instalou foi o
+gerenciador de pacotes, e é lá que ele deve sair.
+
+A remoção é **recusada** quando algum projeto registrado ficaria sem nenhuma
+versão que atenda sua exigência:
+
+```
+$ devm php remove 8.4
+php 8.4.23 é a única versão que atende estes projetos:
+  appmake-erp              exige 8.4 (de devmanager.yaml)
+  fapcen                   exige 8.4 (de devmanager.yaml)
+  instale outra antes, ou use --force para apagar assim mesmo
+```
+
 ### Node
 
 ```sh
 devm node list       # instalados, incluindo os do seu nvm
 devm node available  # instaláveis
 devm node install 22
+devm node remove 22.23.2
 devm node use 22     # fixa no devmanager.yaml
 devm node use --clear
 ```
@@ -196,6 +217,9 @@ ordem: `devmanager.yaml`, `.nvmrc`, `engines.node` do `package.json`.
 
 Quando gerenciado, o shim expõe `node`, `npm` e `npx` juntos: um `npm run dev`
 que caísse no npm do sistema rodaria com a versão errada de Node por baixo.
+
+`devm node remove` só apaga o que o Dev Manager baixou. Uma versão do nvm
+aparece na listagem, mas quem a instalou foi o nvm — remova por lá.
 
 ### Assistentes de IA
 
@@ -294,6 +318,12 @@ make cross   # confirma linux e macOS, amd64 e arm64
 O código é comentado em português, explicando **por que** cada decisão foi
 tomada — não o que a linha faz.
 
+O CI (`.github/workflows/ci.yml`) roda exatamente esses alvos do Makefile, e
+mais o `make static`, publicando o binário como artefato. Rodar comandos
+próprios no CI criaria uma segunda definição de "está certo", e as duas
+divergem. Os testes só rodam em Linux por enquanto; a compilação para macOS
+é verificada pelo `make cross`, mas a suíte não.
+
 ## Limitações conhecidas
 
 - **Linux apenas, por enquanto.** O código evita dependências específicas de
@@ -303,3 +333,17 @@ tomada — não o que a linha faz.
   e avisa. HTTP e HTTPS caem de forma independente.
 - **Reiniciar o daemon derruba todos os ambientes.** Eles não voltam sozinhos;
   `devm start -d <projeto>` religa.
+- **Sem Xdebug — não há depuração por breakpoint.** O PHP do
+  [static-php-cli](https://github.com/crazywhalecc/static-php-cli) é linkado
+  estaticamente e **não carrega extensão compartilhada**: não é o caso de
+  "falta instalar o Xdebug", é que um `.so` não seria carregado de forma
+  alguma. Para o dia a dia sobram `dd()`, `dump()`, `Log` e o
+  `php artisan pail`; para uma sessão de breakpoint, um ambiente com PHP
+  dinâmico (Sail, ou o PHP da distro) continua necessário.
+- **PHP 7.x não está disponível.** O static-php-cli publica a partir do 8.0
+  (`devm php available` mostra 8.0 a 8.5). Projetos legados em 7.x ficam fora
+  do alcance do Dev Manager.
+
+## Licença
+
+[MIT](LICENSE).
