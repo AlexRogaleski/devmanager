@@ -1,12 +1,16 @@
 package proxy
 
 import (
+	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // backendFalso sobe um servidor que devolve o que recebeu, para o teste
@@ -188,5 +192,101 @@ func TestProxyRoteiaComVariacoesDeHost(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Errorf("Host %q: status %d, esperava 200", host, rec.Code)
 		}
+	}
+}
+
+// TestEncerrarAntesDeServir fixa a correção de uma corrida de dados real,
+// encontrada pelo -race no CI e não reproduzível localmente.
+//
+// O daemon chama Escutar na sua goroutine, lança `go p.Servir(ctx)` e, ao
+// receber o cancelamento, chama Encerrar de uma terceira. Enquanto os
+// http.Server eram criados dentro de Servir, um cancelamento logo após a
+// partida fazia Encerrar lê-los enquanto Servir os escrevia.
+//
+// O teste não tenta recriar o entrelaçamento — corrida não se testa por
+// repetição, se testa eliminando a escrita concorrente. O que ele fixa é a
+// propriedade que passou a valer: depois de montados, os servidores existem
+// independentemente de Servir ter rodado, e a ordem entre parar e servir
+// deixou de importar.
+//
+// Nada de portas fixas aqui: o teste do daemon já ocupa a 8080, e os pacotes
+// rodam em paralelo — um segundo teste disputando a mesma porta trocaria uma
+// intermitência por outra.
+func TestEncerrarAntesDeServir(t *testing.T) {
+	p := Novo(NovaTabela(), nil, nil)
+	p.montarServidores()
+
+	if p.srvHTTP == nil || p.srvHTTPS == nil {
+		t.Fatal("montarServidores deixou algum servidor nulo")
+	}
+
+	if err := p.Encerrar(); err != nil {
+		t.Fatalf("Encerrar antes de Servir devolveu erro: %v", err)
+	}
+
+	// A premissa da correção: servir DEPOIS de encerrar não pode ficar
+	// atendendo. Se isto mudasse no Go, o proxy voltaria a segurar a porta
+	// depois de mandado parar — e é melhor descobrir aqui.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	pronto := make(chan error, 1)
+	go func() { pronto <- p.srvHTTP.Serve(ln) }()
+
+	select {
+	case err := <-pronto:
+		if !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("Serve devolveu %v, esperava ErrServerClosed", err)
+		}
+		if ignorarFechamento(err) != nil {
+			t.Errorf("ignorarFechamento deveria tratar isso como fim normal: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve continuou atendendo depois do Shutdown")
+	}
+}
+
+// TestServirEEncerrarConcorrentes exercita a partida e a parada ao mesmo
+// tempo, que é o que o daemon faz: Escutar na goroutine dele, `go Servir` em
+// outra, e Encerrar numa terceira quando o contexto cai.
+//
+// Ele complementa o TestEncerrarAntesDeServir, que fixa a invariante. Este
+// aqui é o que DETECTA: se alguém voltar a escrever estado dentro de Servir,
+// o -race acusa nestas iterações, e não meses depois num runner de CI.
+//
+// Os listeners são injetados em vez de vir de Escutar porque Escutar abre as
+// portas 80 e 443 de verdade — as efêmeras exercitam o mesmo caminho sem
+// disputar porta com ninguém.
+func TestServirEEncerrarConcorrentes(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		p := Novo(NovaTabela(), nil, nil)
+
+		var err error
+		if p.lnHTTP, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
+			t.Fatal(err)
+		}
+		if p.lnHTTPS, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
+			t.Fatal(err)
+		}
+		p.montarServidores()
+
+		ctx, cancelar := context.WithCancel(context.Background())
+		servindo := make(chan struct{})
+		go func() {
+			defer close(servindo)
+			_ = p.Servir(ctx)
+		}()
+
+		if err := p.Encerrar(); err != nil {
+			t.Fatalf("Encerrar concorrente falhou: %v", err)
+		}
+		cancelar()
+		<-servindo
+
+		p.lnHTTP.Close()
+		p.lnHTTPS.Close()
 	}
 }

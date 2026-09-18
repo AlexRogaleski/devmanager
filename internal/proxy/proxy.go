@@ -74,7 +74,56 @@ func (p *Proxy) Escutar() error {
 
 	p.SemPrivilegio = p.PortaHTTP != PortaHTTPPadrao
 	p.MotivoDaQueda = motivo
+	p.montarServidores()
 	return nil
+}
+
+// montarServidores cria os http.Server AQUI, e não dentro de Servir.
+//
+// A diferença é de concorrência, não de estilo. O daemon chama Escutar na
+// própria goroutine e só depois lança `go p.Servir(ctx)`; Encerrar, por sua
+// vez, é chamado de uma terceira. Com a construção dentro de Servir, um
+// cancelamento logo após a partida fazia Encerrar LER p.srvHTTP enquanto
+// Servir o ESCREVIA — corrida de dados de verdade, detectada pelo -race.
+//
+// E o defeito era pior que a corrida: se Encerrar chegasse primeiro, via
+// nil, não encerrava nada, e Servir seguia adiante servindo — o proxy
+// continuava de pé depois de mandado parar, segurando as portas 80 e 443.
+//
+// Montando aqui, os campos são escritos uma vez só, antes de qualquer
+// goroutine existir, e depois só são lidos. A ordem entre Encerrar e Servir
+// deixa de importar: Shutdown antes de Serve faz o Serve devolver
+// ErrServerClosed na hora, que ignorarFechamento trata como fim normal.
+func (p *Proxy) montarServidores() {
+	handler := http.HandlerFunc(p.atender)
+
+	p.srvHTTP = &http.Server{
+		Handler: handler,
+		// Sem ReadHeaderTimeout, uma conexão que abre e não fala segura um
+		// descritor de arquivo indefinidamente.
+		ReadHeaderTimeout: 20 * time.Second,
+	}
+
+	p.srvHTTPS = &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 20 * time.Second,
+		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			// GetCertificate é chamado no handshake, com o domínio que o
+			// cliente pediu via SNI. É isso que permite emitir o certificado
+			// sob demanda: um projeto novo funciona no primeiro acesso, sem
+			// nenhum passo de configuração.
+			GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+				nome := hello.ServerName
+				if nome == "" {
+					// Cliente sem SNI (IP direto, ferramenta antiga): não há
+					// domínio para certificar.
+					return nil, fmt.Errorf("conexão TLS sem indicação de domínio")
+				}
+				return p.CA.CertificadoPara(nome)
+			},
+		},
+	}
 }
 
 // escutarCom tenta a porta desejada e cai para a alternativa se ela não der.
@@ -112,38 +161,8 @@ func escutarCom(desejada, alternativa int) (net.Listener, int, string, error) {
 
 // Servir atende até o contexto ser cancelado.
 func (p *Proxy) Servir(ctx context.Context) error {
-	if p.lnHTTP == nil {
+	if p.lnHTTP == nil || p.srvHTTP == nil {
 		return errors.New("Escutar precisa ser chamado antes de Servir")
-	}
-
-	handler := http.HandlerFunc(p.atender)
-
-	p.srvHTTP = &http.Server{
-		Handler: handler,
-		// Sem ReadHeaderTimeout, uma conexão que abre e não fala segura um
-		// descritor de arquivo indefinidamente.
-		ReadHeaderTimeout: 20 * time.Second,
-	}
-
-	p.srvHTTPS = &http.Server{
-		Handler:           handler,
-		ReadHeaderTimeout: 20 * time.Second,
-		TLSConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			// GetCertificate é chamado no handshake, com o domínio que o
-			// cliente pediu via SNI. É isso que permite emitir o certificado
-			// sob demanda: um projeto novo funciona no primeiro acesso, sem
-			// nenhum passo de configuração.
-			GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-				nome := hello.ServerName
-				if nome == "" {
-					// Cliente sem SNI (IP direto, ferramenta antiga): não há
-					// domínio para certificar.
-					return nil, fmt.Errorf("conexão TLS sem indicação de domínio")
-				}
-				return p.CA.CertificadoPara(nome)
-			},
-		},
 	}
 
 	erros := make(chan error, 2)
