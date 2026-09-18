@@ -290,3 +290,55 @@ func TestServirEEncerrarConcorrentes(t *testing.T) {
 		p.lnHTTPS.Close()
 	}
 }
+
+// TestProxyNaoAceitaConexaoDaRede abre o listener do proxy e tenta chegar
+// nele pelo IP de rede da máquina, como faria alguém na mesma rede.
+//
+// O teste confere o comportamento, não a string do endereço: um "127.0.0.1"
+// na constante não vale nada se alguém passar a usar outra função para
+// escutar. Até a v0.1.0 o proxy abria todas as interfaces, e esta conexão
+// era atendida.
+func TestProxyNaoAceitaConexaoDaRede(t *testing.T) {
+	ipDeRede := primeiroIPv4DeRede()
+	if ipDeRede == nil {
+		t.Skip("a máquina não tem interface de rede além do loopback")
+	}
+
+	ln, err := escutar(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	porta := ln.Addr().(*net.TCPAddr).Port
+
+	// Pelo loopback, conecta — senão o teste abaixo passaria por o
+	// listener estar simplesmente quebrado.
+	if c, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(porta)), time.Second); err != nil {
+		t.Fatalf("o proxy precisa aceitar pelo loopback: %v", err)
+	} else {
+		c.Close()
+	}
+
+	alvo := net.JoinHostPort(ipDeRede.String(), strconv.Itoa(porta))
+	if c, err := net.DialTimeout("tcp", alvo, time.Second); err == nil {
+		c.Close()
+		t.Fatalf("o proxy aceitou conexão por %s — está exposto na rede", alvo)
+	}
+}
+
+func primeiroIPv4DeRede() net.IP {
+	enderecos, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil
+	}
+	for _, e := range enderecos {
+		rede, ok := e.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		if ip := rede.IP.To4(); ip != nil && !ip.IsLoopback() && !ip.IsLinkLocalUnicast() {
+			return ip
+		}
+	}
+	return nil
+}

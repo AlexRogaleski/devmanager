@@ -91,23 +91,22 @@ func TestRespondeA(t *testing.T) {
 	}
 }
 
-func TestRespondeAAAA(t *testing.T) {
+// TestAAAASemResposta: o proxy escuta só em 127.0.0.1, então ::1 apontaria
+// para uma porta fechada. NOERROR sem resposta diz "o nome existe, só não tem
+// IPv6" — o cliente usa o IPv4 direto, sem tentar e falhar antes.
+func TestAAAASemResposta(t *testing.T) {
 	endereco := servidorDeTeste(t)
 
 	resp, err := consultar(endereco, "app.test.", dns.TypeAAAA, "udp")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Answer) != 1 {
-		t.Fatalf("respostas = %d, esperava 1", len(resp.Answer))
+	if resp.Rcode != dns.RcodeSuccess {
+		t.Errorf("rcode = %s; NXDOMAIN faria o cliente desistir do nome inteiro",
+			dns.RcodeToString[resp.Rcode])
 	}
-
-	aaaa, ok := resp.Answer[0].(*dns.AAAA)
-	if !ok {
-		t.Fatalf("resposta = %T, esperava *dns.AAAA", resp.Answer[0])
-	}
-	if !aaaa.AAAA.IsLoopback() {
-		t.Errorf("AAAA = %v, esperava loopback", aaaa.AAAA)
+	if len(resp.Answer) != 0 {
+		t.Errorf("respostas = %v, esperava nenhuma", resp.Answer)
 	}
 }
 

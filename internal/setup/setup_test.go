@@ -2,9 +2,11 @@ package setup
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	devmdns "github.com/AlexRogaleski/devmanager/internal/dns"
@@ -135,5 +137,31 @@ func escrever(t *testing.T, caminho, conteudo string) {
 	t.Helper()
 	if err := os.WriteFile(caminho, []byte(conteudo), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSondarPortas(t *testing.T) {
+	casos := []struct {
+		nome  string
+		err   error
+		feito bool
+		tem   string
+	}{
+		{"permitido", nil, true, "permite"},
+		// Em uso implica permitido: o kernel confere a permissão antes de
+		// procurar conflito — e quem está lá costuma ser o nosso proxy.
+		{"em uso", fmt.Errorf("listen: %w", syscall.EADDRINUSE), true, "já está aberta"},
+		{"negado", fmt.Errorf("listen: %w", syscall.EACCES), false, "8080"},
+		{"outro erro", fmt.Errorf("listen: algo inesperado"), false, "não consegui"},
+	}
+
+	for _, c := range casos {
+		p := sondarPortas(Passo{}, func() error { return c.err })
+		if p.Feito != c.feito {
+			t.Errorf("%s: Feito = %v, esperava %v", c.nome, p.Feito, c.feito)
+		}
+		if !strings.Contains(p.Detalhe, c.tem) {
+			t.Errorf("%s: detalhe %q não contém %q", c.nome, p.Detalhe, c.tem)
+		}
 	}
 }

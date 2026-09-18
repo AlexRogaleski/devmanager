@@ -9,13 +9,16 @@ package setup
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	devmdns "github.com/AlexRogaleski/devmanager/internal/dns"
@@ -154,9 +157,7 @@ func passoPortas() Passo {
 	}
 
 	if runtime.GOOS != "linux" {
-		p.Feito = true
-		p.Detalhe = "não se aplica fora do Linux"
-		return p
+		return sondarPortas(p, sondarPorta80)
 	}
 
 	atual, err := portaMinimaAtual()
@@ -177,6 +178,44 @@ func passoPortas() Passo {
 		fmt.Sprintf("sudo sysctl -p %s", arquivoSysctl),
 	}
 	return p
+}
+
+// sondarPortas decide o passo fora do Linux perguntando ao próprio kernel.
+//
+// Fora do Linux não há sysctl para ler, e afirmar a regra de cor seria
+// frágil: o macOS, por exemplo, libera a porta 80 sem root em 0.0.0.0 mas não
+// num endereço específico como 127.0.0.1 — e o proxy escuta justamente no
+// loopback. Tentar abrir a porta é a única resposta que não envelhece.
+func sondarPortas(p Passo, sondar func() error) Passo {
+	err := sondar()
+
+	switch {
+	case err == nil:
+		p.Feito = true
+		p.Detalhe = "o sistema permite"
+
+	case errors.Is(err, syscall.EADDRINUSE):
+		// Em uso implica permitido: o kernel confere a permissão antes de
+		// procurar conflito. Quem está lá costuma ser o próprio daemon.
+		p.Feito = true
+		p.Detalhe = "a porta 80 já está aberta (pelo proxy do daemon, se ele estiver rodando)"
+
+	case errors.Is(err, os.ErrPermission):
+		p.Detalhe = "o sistema só libera a porta 80 no loopback para root; " +
+			"o proxy usa 8080 e 8443, e as URLs levam a porta"
+
+	default:
+		p.Detalhe = "não consegui testar a porta 80: " + err.Error()
+	}
+	return p
+}
+
+func sondarPorta80() error {
+	ln, err := net.Listen("tcp", "127.0.0.1:80")
+	if err != nil {
+		return err
+	}
+	return ln.Close()
 }
 
 func portaMinimaAtual() (int, error) {

@@ -6,14 +6,24 @@ import (
 )
 
 func TestAvisoDeQuedaSemPermissaoNaoRecomendaSetcap(t *testing.T) {
-	for _, goos := range []string{"linux", "darwin"} {
-		aviso := avisoDeQuedaEm(goos, "sem permissão para a porta 80", 8080, 8443)
-		if strings.Contains(aviso, "setcap") {
-			t.Errorf("%s: setcap foi abandonado — toda atualização do binário o apaga:\n%s", goos, aviso)
-		}
-		if !strings.Contains(aviso, "devm setup") {
-			t.Errorf("%s: deveria apontar o devm setup:\n%s", goos, aviso)
-		}
+	aviso := avisoDeQuedaEm("linux", "sem permissão para a porta 80", 8080, 8443)
+	if strings.Contains(aviso, "setcap") {
+		t.Errorf("setcap foi abandonado — toda atualização do binário o apaga:\n%s", aviso)
+	}
+	if !strings.Contains(aviso, "devm setup") {
+		t.Errorf("no Linux o setup tem o conserto (sysctl):\n%s", aviso)
+	}
+}
+
+// No macOS não existe ajuste equivalente, e mandar rodar o setup seria mandar
+// procurar um conserto que ele não tem.
+func TestAvisoDeQuedaSemPermissaoNoMacOS(t *testing.T) {
+	aviso := avisoDeQuedaEm("darwin", "sem permissão para a porta 80", 8080, 8443)
+	if strings.Contains(aviso, "devm setup") || strings.Contains(aviso, "setcap") {
+		t.Errorf("no macOS não há ajuste a sugerir:\n%s", aviso)
+	}
+	if !strings.Contains(aviso, "porta na URL") {
+		t.Errorf("deveria dizer que os projetos funcionam com a porta na URL:\n%s", aviso)
 	}
 }
 

@@ -146,17 +146,14 @@ func (s *Servidor) atender(w dns.ResponseWriter, req *dns.Msg) {
 				A:   net.IPv4(127, 0, 0, 1),
 			})
 
-		case dns.TypeAAAA:
-			resp.Answer = append(resp.Answer, &dns.AAAA{
-				Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: s.TTL},
-				AAAA: net.IPv6loopback,
-			})
-
 		default:
-			// Outros tipos (MX, TXT, SRV) recebem NOERROR sem resposta —
-			// a forma correta de dizer "o nome existe, mas não tem esse
-			// registro". NXDOMAIN aqui faria o cliente concluir que o
-			// domínio inteiro não existe.
+			// Os demais tipos recebem NOERROR sem resposta — a forma correta
+			// de dizer "o nome existe, mas não tem esse registro". NXDOMAIN
+			// aqui faria o cliente concluir que o domínio inteiro não existe.
+			//
+			// AAAA entra neste grupo de propósito. O proxy escuta só em
+			// 127.0.0.1; responder ::1 mandaria o navegador tentar primeiro
+			// uma porta fechada em IPv6, e só depois cair para o IPv4.
 		}
 	}
 

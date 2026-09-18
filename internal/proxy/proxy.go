@@ -11,6 +11,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -126,6 +127,25 @@ func (p *Proxy) montarServidores() {
 	}
 }
 
+// enderecoDeEscuta é o único endereço em que o proxy aceita conexões.
+//
+// Até a v0.1.0 o proxy abria ":80" — todas as interfaces. Os serviços e o
+// `artisan serve` escutam só no loopback, mas o proxy reencaminhava para eles
+// qualquer um que chegasse pela rede com o Host certo: numa rede de café, o
+// app de quem estivesse desenvolvendo, quase sempre com APP_DEBUG ligado e a
+// página de erro mostrando as variáveis de ambiente.
+//
+// Num Fedora o firewall fecha a 80 e a 443, mas abre de 1025 a 65535 — onde
+// caem as alternativas 8080 e 8443. No Ubuntu e no macOS o firewall vem
+// desligado. A proteção dependia da configuração de cada máquina; escutando
+// no loopback, ela passa a ser do próprio Dev Manager.
+const enderecoDeEscuta = "127.0.0.1"
+
+// escutar abre uma porta TCP no loopback.
+func escutar(porta int) (net.Listener, error) {
+	return net.Listen("tcp", net.JoinHostPort(enderecoDeEscuta, strconv.Itoa(porta)))
+}
+
 // escutarCom tenta a porta desejada e cai para a alternativa se ela não der.
 //
 // Cai nos DOIS casos — sem permissão e porta ocupada — e devolve o motivo
@@ -140,7 +160,7 @@ func (p *Proxy) montarServidores() {
 // perder o proxy INTEIRO por causa disso é desproporcional. Reportar a queda
 // resolve o risco de esconder o conflito sem custar a funcionalidade.
 func escutarCom(desejada, alternativa int) (net.Listener, int, string, error) {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", desejada))
+	ln, err := escutar(desejada)
 	if err == nil {
 		return ln, desejada, "", nil
 	}
@@ -150,7 +170,7 @@ func escutarCom(desejada, alternativa int) (net.Listener, int, string, error) {
 		motivo = fmt.Sprintf("sem permissão para a porta %d", desejada)
 	}
 
-	alt, err := net.Listen("tcp", fmt.Sprintf(":%d", alternativa))
+	alt, err := escutar(alternativa)
 	if err != nil {
 		// As duas falharam: aí sim não há o que fazer, e o erro precisa
 		// mencionar as duas portas para o diagnóstico ser possível.
@@ -169,7 +189,7 @@ func (p *Proxy) Servir(ctx context.Context) error {
 	go func() { erros <- ignorarFechamento(p.srvHTTP.Serve(p.lnHTTP)) }()
 	go func() { erros <- ignorarFechamento(p.srvHTTPS.ServeTLS(p.lnHTTPS, "", "")) }()
 
-	p.logf("proxy ouvindo em http://:%d e https://:%d", p.PortaHTTP, p.PortaHTTPS)
+	p.logf("proxy ouvindo em http://%s:%d e https://%s:%d (só o loopback)", enderecoDeEscuta, p.PortaHTTP, enderecoDeEscuta, p.PortaHTTPS)
 	if p.MotivoDaQueda != "" {
 		p.logf("%s — usando %d e %d", p.MotivoDaQueda, p.PortaHTTP, p.PortaHTTPS)
 	}
