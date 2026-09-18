@@ -379,3 +379,8 @@ func escreverArquivo(caminho string, origem io.Reader, modo os.FileMode) error {
 	}
 	return nil
 }
+
+// Remove apaga uma versão baixada.
+func (p *NodeOficialProvider) Remove(v semver.Version) error {
+	return removerDir(p.Dir, p.DirDaVersao(v))
+}

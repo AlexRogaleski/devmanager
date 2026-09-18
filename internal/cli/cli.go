@@ -146,8 +146,11 @@ Runtimes:
   php use    fixa a versão de PHP do projeto no devmanager.yaml
   php avail  lista versões que podem ser instaladas
   php install  baixa uma versão de PHP isolada do sistema
+  php remove   apaga uma versão de PHP baixada pelo devm
   node list    lista as versões de Node disponíveis (inclusive do nvm)
   node use     fixa a versão de Node do projeto
+  node install baixa uma versão de Node oficial
+  node remove  apaga uma versão de Node baixada pelo devm
 
 Daemon:
   daemon status    mostra se o daemon está rodando

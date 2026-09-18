@@ -19,7 +19,7 @@ import (
 // nodeCmd despacha os subcomandos de `devm node`.
 func nodeCmd(stdio IO, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprint(stdio.Out, "uso: devm node <list|available|install|use|which> [argumentos]\n")
+		fmt.Fprint(stdio.Out, "uso: devm node <list|available|install|remove|use|which> [argumentos]\n")
 		return nil
 	}
 
@@ -31,6 +31,8 @@ func nodeCmd(stdio IO, args []string) error {
 		return nodeAvailableCmd(w, args[1:])
 	case "install":
 		return nodeInstallCmd(w, args[1:])
+	case "remove", "rm", "uninstall":
+		return nodeRemoveCmd(w, args[1:])
 	case "use":
 		return nodeUseCmd(w, args[1:])
 	case "which":
@@ -77,11 +79,34 @@ func nodeListCmd(w io.Writer, args []string) error {
 		return nil
 	}
 
-	fmt.Fprintf(w, "%-12s %-12s %s\n", "VERSÃO", "ORIGEM", "CAMINHO")
+	fmt.Fprintf(w, "%-12s %-12s %-8s %s\n", "VERSÃO", "ORIGEM", "TAMANHO", "CAMINHO")
 	for _, r := range encontrados {
-		fmt.Fprintf(w, "%-12s %-12s %s\n", r.Version, r.Source, r.Bin)
+		fmt.Fprintf(w, "%-12s %-12s %-8s %s\n", r.Version, r.Source, tamanhoDoRuntime(r), r.Bin)
 	}
 	return nil
+}
+
+// nodeRemoveCmd apaga um Node baixado pelo Dev Manager.
+//
+// Só os nossos: um Node do nvm aparece no `devm node list`, mas quem o
+// instalou foi o nvm, e é lá que ele deve ser removido. O NodeSystemProvider
+// não implementa Removedor justamente para isso não ser possível.
+func nodeRemoveCmd(w io.Writer, args []string) error {
+	p, err := nodeOficial()
+	if err != nil {
+		return err
+	}
+	return removerRuntime(w, remocao{
+		Lingua:   "node",
+		Comando:  "devm node remove",
+		Provider: p,
+		Todos: func(ctx context.Context) ([]runtimes.Runtime, error) {
+			return environment.NodeRuntimes().List(ctx, "node")
+		},
+		Exigencia: func(p *project.Project) (string, project.Origem) {
+			return p.NodeRequirement()
+		},
+	}, args)
 }
 
 func nodeAvailableCmd(w io.Writer, args []string) error {

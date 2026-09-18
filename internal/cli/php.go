@@ -8,6 +8,7 @@ import (
 	"io"
 
 	"github.com/AlexRogaleski/devmanager/internal/environment"
+	"github.com/AlexRogaleski/devmanager/internal/project"
 	"github.com/AlexRogaleski/devmanager/internal/runtimes"
 	"github.com/AlexRogaleski/devmanager/internal/semver"
 )
@@ -18,7 +19,7 @@ func defaultManager() *runtimes.Manager { return environment.Runtimes() }
 // phpCmd despacha os subcomandos de `devm php`.
 func phpCmd(w io.Writer, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprint(w, "uso: devm php <list|available|install|use|which> [argumentos]\n")
+		fmt.Fprint(w, "uso: devm php <list|available|install|remove|use|which> [argumentos]\n")
 		return nil
 	}
 
@@ -33,6 +34,8 @@ func phpCmd(w io.Writer, args []string) error {
 		return phpInstallCmd(w, args[1:])
 	case "available", "avail":
 		return phpAvailableCmd(w, args[1:])
+	case "remove", "rm", "uninstall":
+		return phpRemoveCmd(w, args[1:])
 	default:
 		return fmt.Errorf("subcomando desconhecido: php %q", args[0])
 	}
@@ -72,11 +75,32 @@ func phpListCmd(w io.Writer, args []string) error {
 		return nil
 	}
 
-	fmt.Fprintf(w, "%-10s %-10s %s\n", "VERSÃO", "ORIGEM", "CAMINHO")
+	// A coluna de tamanho é o que torna a listagem útil para decidir o que
+	// apagar: sem ela o usuário vê o que tem, mas não o que isso custa.
+	fmt.Fprintf(w, "%-10s %-10s %-8s %s\n", "VERSÃO", "ORIGEM", "TAMANHO", "CAMINHO")
 	for _, r := range encontrados {
-		fmt.Fprintf(w, "%-10s %-10s %s\n", r.Version, r.Source, r.Bin)
+		fmt.Fprintf(w, "%-10s %-10s %-8s %s\n", r.Version, r.Source, tamanhoDoRuntime(r), r.Bin)
 	}
 	return nil
+}
+
+// phpRemoveCmd apaga um PHP baixado pelo Dev Manager.
+func phpRemoveCmd(w io.Writer, args []string) error {
+	sp, err := staticProvider()
+	if err != nil {
+		return err
+	}
+	return removerRuntime(w, remocao{
+		Lingua:   "php",
+		Comando:  "devm php remove",
+		Provider: sp,
+		Todos: func(ctx context.Context) ([]runtimes.Runtime, error) {
+			return defaultManager().List(ctx, "php")
+		},
+		Exigencia: func(p *project.Project) (string, project.Origem) {
+			return p.PHPRequirement()
+		},
+	}, args)
 }
 
 // phpWhichCmd responde "que PHP você usaria para esta exigência?".

@@ -224,3 +224,8 @@ func (p *StaticProvider) URLDoBuild(v semver.Version) string {
 func (p *StaticProvider) DirDaVersao(v semver.Version) string {
 	return filepath.Join(p.Dir, v.String())
 }
+
+// Remove apaga uma versão baixada.
+func (p *StaticProvider) Remove(v semver.Version) error {
+	return removerDir(p.Dir, p.DirDaVersao(v))
+}
