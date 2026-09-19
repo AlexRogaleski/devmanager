@@ -90,8 +90,14 @@ jobs:
       - name: Detector de corrida
         run: make race
 
-      - name: Compilar
-        run: make build
+      # A MESMA receita da publicação, e não `make build`. No Mac, o build
+      # comum liga o cgo e usa o linker da Apple, que assina o binário; o
+      # publicado é CGO_ENABLED=0 com -trimpath, ligado pelo linker do Go. No
+      # Apple Silicon todo executável precisa de assinatura, senão o kernel
+      # o mata ao executar — testar o binário do build comum provaria que o
+      # CÓDIGO funciona no Mac, não que o ARQUIVO da Release funciona.
+      - name: Compilar como a Release
+        run: make release
 
       # A suíte cobre a lógica; isto cobre o sistema. O runner tem sudo sem
       # senha, então o `devm setup --apply` configura /etc/resolver e o
@@ -100,6 +106,8 @@ jobs:
       # — os dois só tinham sido testados em Linux.
       - name: Verificação de ponta a ponta
         timeout-minutes: 10
+        env:
+          DEVM: ./dist/devm-darwin-arm64
         run: .github/scripts/verificar-macos.sh
 
   # Publicação: só em tag, e só depois de a suíte passar.
@@ -130,8 +138,8 @@ jobs:
         run: make release VERSION=${{ github.ref_name }}
 
       # As notas são escritas aqui, e não geradas pelo GitHub, por causa da
-      # última linha: um binário compilado e não testado — hoje, o de macOS
-      # Intel — precisa dizer isso a quem baixa.
+      # última linha: um binário compilado e não testado — hoje, os de Linux
+      # ARM64 e macOS Intel — precisa dizer isso a quem baixa.
       - name: Notas da versão
         run: |
           # O heredoc é CITADO ('FIM'), então o shell não interpreta nada do
@@ -143,12 +151,20 @@ jobs:
           # A URL aparece duas vezes por isso. O ${{ github.ref_name }} não
           # precisa do shell: o Actions o substitui antes de o script rodar.
           cat > dist/NOTAS.md <<'FIM'
-          Binário estático, sem dependências de sistema.
+          Binário estático, sem dependências de sistema. No Linux:
 
               curl -LO https://github.com/AlexRogaleski/devmanager/releases/download/${{ github.ref_name }}/devm-linux-amd64
               curl -LO https://github.com/AlexRogaleski/devmanager/releases/download/${{ github.ref_name }}/SHA256SUMS
               sha256sum -c --ignore-missing SHA256SUMS
               install -m 755 devm-linux-amd64 ~/.local/bin/devm
+              devm setup
+
+          No macOS Apple Silicon:
+
+              curl -LO https://github.com/AlexRogaleski/devmanager/releases/download/${{ github.ref_name }}/devm-darwin-arm64
+              curl -LO https://github.com/AlexRogaleski/devmanager/releases/download/${{ github.ref_name }}/SHA256SUMS
+              grep devm-darwin-arm64 SHA256SUMS | shasum -a 256 -c
+              mkdir -p ~/.local/bin && install -m 755 devm-darwin-arm64 ~/.local/bin/devm
               devm setup
 
           A conferência do checksum está no meio da sequência, e não como
@@ -163,9 +179,10 @@ jobs:
           | `devm-darwin-amd64` | macOS Intel |
           | `devm-darwin-arm64` | macOS Apple Silicon |
 
-          O de macOS Apple Silicon passa pela suíte e por uma verificação
-          de ponta a ponta num Mac a cada versão. O de macOS Intel é
-          compilado, mas não testado.
+          O de Linux x86-64 e o de macOS Apple Silicon passam pela suíte a
+          cada versão, e o de macOS também por uma verificação de ponta a
+          ponta num Mac. Os de Linux ARM64 e de macOS Intel são compilados,
+          mas não testados.
           FIM
 
       - name: Publicar a Release

@@ -18,6 +18,11 @@ LDFLAGS := -X github.com/AlexRogaleski/devmanager/internal/cli.Version=$(VERSION
 # É a mesma propriedade que escolhemos para o PHP.
 HOST_BIN ?= $(HOME)/.local/bin/devm
 
+# sha256sum é do GNU coreutils e não vem no macOS; shasum vem nos dois. A
+# saída é idêntica — "hash  arquivo" —, então o SHA256SUMS confere igual com
+# qualquer um.
+SHA256 := $(shell command -v sha256sum >/dev/null 2>&1 && echo sha256sum || echo shasum -a 256)
+
 .PHONY: build install test race cover vet fmt cross clean static install-host release
 
 ## build: compila o binário em ./bin/devm
@@ -91,7 +96,7 @@ release:
 		CGO_ENABLED=0 GOOS=$$so GOARCH=$$arch go build -trimpath \
 			-ldflags "$(LDFLAGS)" -o dist/devm-$$so-$$arch ./cmd/devm || exit 1; \
 	done
-	@cd dist && sha256sum devm-* > SHA256SUMS
+	@cd dist && $(SHA256) devm-* > SHA256SUMS
 	@echo
 	@ls -1sh dist/
 
