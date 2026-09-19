@@ -342,3 +342,91 @@ func primeiroIPv4DeRede() net.IP {
 	}
 	return nil
 }
+
+// TestSomenteLoopbackFechaQuemVemDaRede exercita o filtro que o macOS usa
+// quando o kernel nega a porta 80 no 127.0.0.1: escutar em 0.0.0.0 e recusar
+// no Accept o que não vier do loopback.
+//
+// A proteção fica no nosso código, e não no kernel, então precisa de teste
+// próprio — o TestProxyNaoAceitaConexaoDaRede cobre o caso em que é o kernel
+// quem recusa.
+func TestSomenteLoopbackFechaQuemVemDaRede(t *testing.T) {
+	ipDeRede := primeiroIPv4DeRede()
+	if ipDeRede == nil {
+		t.Skip("a máquina não tem interface de rede além do loopback")
+	}
+
+	todas, err := net.Listen("tcp4", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln := somenteLoopback{todas}
+	defer ln.Close()
+	porta := strconv.Itoa(todas.Addr().(*net.TCPAddr).Port)
+
+	aceitas := make(chan net.Conn, 4)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				close(aceitas)
+				return
+			}
+			aceitas <- c
+		}
+	}()
+
+	// Pela rede: o handshake completa (é o kernel quem responde), mas a
+	// conexão é fechada sem um byte — a leitura termina, sem dados.
+	deFora, err := net.DialTimeout("tcp", net.JoinHostPort(ipDeRede.String(), porta), time.Second)
+	if err != nil {
+		t.Fatalf("o handshake pelo IP de rede deveria completar: %v", err)
+	}
+	defer deFora.Close()
+	deFora.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if n, err := deFora.Read(make([]byte, 1)); n != 0 || err == nil {
+		t.Fatalf("a conexão de fora deveria ser fechada sem dados (n=%d, err=%v)", n, err)
+	} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		t.Fatal("a conexão de fora ficou aberta: o filtro não a fechou")
+	}
+
+	// Pelo loopback: chega ao Accept.
+	deDentro, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", porta), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer deDentro.Close()
+
+	select {
+	case c := <-aceitas:
+		defer c.Close()
+		if !c.RemoteAddr().(*net.TCPAddr).IP.IsLoopback() {
+			t.Errorf("o Accept entregou uma conexão de fora: %v", c.RemoteAddr())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a conexão do loopback não chegou ao Accept")
+	}
+
+	// E a de fora nunca chegou: só a do loopback está no canal.
+	select {
+	case c := <-aceitas:
+		t.Errorf("uma segunda conexão chegou ao Accept: %v", c.RemoteAddr())
+	default:
+	}
+}
+
+// No Linux o recurso do macOS nunca entra: lá o loopback é liberado pelo
+// sysctl, e a proteção pelo kernel é a mais forte.
+func TestEscutarNoLinuxNuncaUsaOFiltro(t *testing.T) {
+	ln, err := escutarEm("linux", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if _, filtrado := ln.(somenteLoopback); filtrado {
+		t.Error("no Linux o listener deveria ser o do loopback, não o filtrado")
+	}
+	if !ln.Addr().(*net.TCPAddr).IP.IsLoopback() {
+		t.Errorf("endereço = %v, esperava loopback", ln.Addr())
+	}
+}

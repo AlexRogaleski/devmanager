@@ -22,7 +22,7 @@ func TestAvisoDeQuedaSemPermissaoNoMacOS(t *testing.T) {
 	if strings.Contains(aviso, "devm setup") || strings.Contains(aviso, "setcap") {
 		t.Errorf("no macOS não há ajuste a sugerir:\n%s", aviso)
 	}
-	if !strings.Contains(aviso, "porta na URL") {
+	if !strings.Contains(aviso, "porta") || !strings.Contains(aviso, "URL") {
 		t.Errorf("deveria dizer que os projetos funcionam com a porta na URL:\n%s", aviso)
 	}
 }

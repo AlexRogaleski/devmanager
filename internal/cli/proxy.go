@@ -149,15 +149,14 @@ alternativas — os projetos funcionam igual, só com a porta na URL.
 `, quemUsaAPorta(goos, 80))
 	}
 
-	// No macOS não há ajuste equivalente ao sysctl do Linux: o kernel só
-	// libera portas abaixo de 1024 num endereço específico para root, e o
-	// proxy escuta no loopback de propósito. Mandar rodar o setup seria
-	// mandar procurar um conserto que não existe.
+	// No macOS o proxy já tenta tudo o que um usuário comum pode: o
+	// loopback e, se o kernel negar, todas as interfaces com filtro. Negado
+	// mesmo assim, não há ajuste que o setup possa sugerir.
 	if goos == "darwin" {
 		return cabecalho + `
-no macOS, abrir a porta 80 no loopback exige root, e o proxy não escuta
-fora do loopback para não expor os projetos na rede. Os projetos
-funcionam igual, com a porta na URL.
+o macOS negou a porta 80 mesmo em todas as interfaces, o que só acontece
+em versões antigas do sistema. Os projetos funcionam igual, com a porta
+na URL.
 `
 	}
 

@@ -11,7 +11,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +21,7 @@ import (
 	"time"
 
 	devmdns "github.com/AlexRogaleski/devmanager/internal/dns"
+	"github.com/AlexRogaleski/devmanager/internal/proxy"
 	"github.com/AlexRogaleski/devmanager/internal/shell"
 )
 
@@ -183,9 +183,10 @@ func passoPortas() Passo {
 // sondarPortas decide o passo fora do Linux perguntando ao próprio kernel.
 //
 // Fora do Linux não há sysctl para ler, e afirmar a regra de cor seria
-// frágil: o macOS, por exemplo, libera a porta 80 sem root em 0.0.0.0 mas não
-// num endereço específico como 127.0.0.1 — e o proxy escuta justamente no
-// loopback. Tentar abrir a porta é a única resposta que não envelhece.
+// frágil. A sonda é o proxy.PodeAbrir, que abre a porta pelo mesmo caminho
+// que o proxy — no macOS, inclusive o recurso de escutar em 0.0.0.0 com
+// filtro. Um diagnóstico calculado por outro caminho acabaria discordando
+// do que o proxy de fato consegue.
 func sondarPortas(p Passo, sondar func() error) Passo {
 	err := sondar()
 
@@ -201,7 +202,7 @@ func sondarPortas(p Passo, sondar func() error) Passo {
 		p.Detalhe = "a porta 80 já está aberta (pelo proxy do daemon, se ele estiver rodando)"
 
 	case errors.Is(err, os.ErrPermission):
-		p.Detalhe = "o sistema só libera a porta 80 no loopback para root; " +
+		p.Detalhe = "o sistema não libera a porta 80 sem root; " +
 			"o proxy usa 8080 e 8443, e as URLs levam a porta"
 
 	default:
@@ -210,13 +211,7 @@ func sondarPortas(p Passo, sondar func() error) Passo {
 	return p
 }
 
-func sondarPorta80() error {
-	ln, err := net.Listen("tcp", "127.0.0.1:80")
-	if err != nil {
-		return err
-	}
-	return ln.Close()
-}
+func sondarPorta80() error { return proxy.PodeAbrir(80) }
 
 func portaMinimaAtual() (int, error) {
 	dados, err := os.ReadFile("/proc/sys/net/ipv4/ip_unprivileged_port_start")

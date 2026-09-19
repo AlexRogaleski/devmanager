@@ -11,6 +11,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -141,9 +142,84 @@ func (p *Proxy) montarServidores() {
 // no loopback, ela passa a ser do próprio Dev Manager.
 const enderecoDeEscuta = "127.0.0.1"
 
-// escutar abre uma porta TCP no loopback.
+// escutar abre uma porta TCP que só atende o loopback.
 func escutar(porta int) (net.Listener, error) {
-	return net.Listen("tcp", net.JoinHostPort(enderecoDeEscuta, strconv.Itoa(porta)))
+	return escutarEm(runtime.GOOS, porta)
+}
+
+// escutarEm tenta o loopback e, só no macOS, recorre a todas as interfaces
+// com filtro.
+//
+// O kernel do macOS libera as portas abaixo de 1024 a um usuário comum
+// quando o endereço é 0.0.0.0, mas não num endereço específico como
+// 127.0.0.1. O Valet contorna isso rodando o nginx como root; aqui o daemon
+// nunca é root. A saída é abrir 0.0.0.0 — o que o sistema permite — e
+// recusar, no Accept, toda conexão que não venha do loopback.
+//
+// No Linux o recurso não é usado: o sysctl do `devm setup` libera o
+// loopback, e escutar só nele é a proteção mais forte — quem garante é o
+// kernel, não o nosso código. A tentativa no loopback vem primeiro também no
+// macOS: se ele um dia liberar o endereço específico, o filtro nem entra.
+func escutarEm(goos string, porta int) (net.Listener, error) {
+	ln, err := net.Listen("tcp", net.JoinHostPort(enderecoDeEscuta, strconv.Itoa(porta)))
+	if err == nil || goos != "darwin" || !errors.Is(err, os.ErrPermission) {
+		return ln, err
+	}
+
+	// tcp4: o DNS só responde A, e 0.0.0.0 é a forma que o kernel libera.
+	todas, errTodas := net.Listen("tcp4", net.JoinHostPort("0.0.0.0", strconv.Itoa(porta)))
+	if errTodas != nil {
+		// Devolve o erro ORIGINAL: é ele que diz "sem permissão", e é essa
+		// a mensagem que explica ao usuário por que caímos para a 8080.
+		return nil, err
+	}
+	return somenteLoopback{todas}, nil
+}
+
+// somenteLoopback é um listener que fecha as conexões vindas de fora.
+//
+// O filtro é confiável porque o kernel descarta, na entrada, pacotes que
+// chegam por uma interface de rede alegando origem 127.0.0.1 — um endereço
+// de loopback no RemoteAddr só pode ter vindo da própria máquina.
+//
+// Quem vem de fora completa a conexão TCP (quem responde o handshake é o
+// kernel, antes de o Accept existir) e a vê fechada em seguida, sem um byte
+// de HTTP. Um scanner vê a porta aberta; não vê nada atrás dela.
+type somenteLoopback struct {
+	net.Listener
+}
+
+func (l somenteLoopback) Accept() (net.Conn, error) {
+	for {
+		c, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		if tcp, ok := c.RemoteAddr().(*net.TCPAddr); ok && tcp.IP.IsLoopback() {
+			return c, nil
+		}
+		c.Close()
+	}
+}
+
+// PodeAbrir diz se o proxy conseguiria escutar numa porta agora.
+//
+// É o teste que o `devm setup` usa fora do Linux: pela MESMA função que o
+// proxy usa, para que o diagnóstico nunca discorde do que o proxy consegue.
+func PodeAbrir(porta int) error {
+	ln, err := escutar(porta)
+	if err != nil {
+		return err
+	}
+	return ln.Close()
+}
+
+// descreverEscuta diz, para o log, como o listener protege o proxy.
+func descreverEscuta(ln net.Listener) string {
+	if _, filtrado := ln.(somenteLoopback); filtrado {
+		return "em todas as interfaces, recusando conexões de fora do loopback"
+	}
+	return "só no loopback"
 }
 
 // escutarCom tenta a porta desejada e cai para a alternativa se ela não der.
@@ -189,7 +265,7 @@ func (p *Proxy) Servir(ctx context.Context) error {
 	go func() { erros <- ignorarFechamento(p.srvHTTP.Serve(p.lnHTTP)) }()
 	go func() { erros <- ignorarFechamento(p.srvHTTPS.ServeTLS(p.lnHTTPS, "", "")) }()
 
-	p.logf("proxy ouvindo em http://%s:%d e https://%s:%d (só o loopback)", enderecoDeEscuta, p.PortaHTTP, enderecoDeEscuta, p.PortaHTTPS)
+	p.logf("proxy ouvindo em http://:%d e https://:%d, %s", p.PortaHTTP, p.PortaHTTPS, descreverEscuta(p.lnHTTP))
 	if p.MotivoDaQueda != "" {
 		p.logf("%s — usando %d e %d", p.MotivoDaQueda, p.PortaHTTP, p.PortaHTTPS)
 	}

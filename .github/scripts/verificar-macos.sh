@@ -66,6 +66,21 @@ echo "HTTP $CODIGO"
 [ "$CODIGO" = "404" ] || falhar "esperava 404 do proxy, veio $CODIGO"
 fim
 
+grupo "proxy não atende pela rede"
+# Se o kernel negou a porta 80 no 127.0.0.1, o proxy escuta em 0.0.0.0 e
+# fecha no Accept o que vem de fora. O proxy status diz qual caso ocorreu;
+# em qualquer um, uma requisição pelo IP de rede não pode receber resposta.
+IP=$(ipconfig getifaddr en0 || true)
+if [ -n "$IP" ]; then
+	if curl -s -m 3 -o /dev/null -H "Host: qualquer-coisa.test" "http://$IP:$PORTA/"; then
+		falhar "o proxy respondeu pelo IP de rede $IP — está exposto"
+	fi
+	echo "sem resposta pelo IP de rede $IP, como devia"
+else
+	echo "sem IP em en0; verificação pulada"
+fi
+fim
+
 grupo "CA confiável"
 "$DEVM" proxy ca
 "$DEVM" setup --json | python3 -c '
