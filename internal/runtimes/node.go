@@ -108,7 +108,9 @@ func (p *NodeSystemProvider) candidatos() []candidatoNode {
 		}
 
 		// fnm e volta, os sucessores mais comuns do nvm.
-		saida = append(saida, versoesEm(filepath.Join(home, ".fnm", "node-versions"), "installation/bin/node", "fnm")...)
+		for _, fnm := range diretoriosDoFnm(home) {
+			saida = append(saida, versoesEm(filepath.Join(fnm, "node-versions"), "installation/bin/node", "fnm")...)
+		}
 		saida = append(saida, versoesEm(filepath.Join(home, ".volta", "tools", "image", "node"), "bin/node", "volta")...)
 	}
 
@@ -117,6 +119,34 @@ func (p *NodeSystemProvider) candidatos() []candidatoNode {
 		saida = append(saida, candidatoNode{caminho, SourceNodeSist})
 	}
 	return saida
+}
+
+// diretoriosDoFnm lista onde o fnm pode guardar as versões.
+//
+// O fnm usa o diretório de dados da plataforma, e ele muda de sistema para
+// sistema: ~/.local/share/fnm no Linux, ~/Library/Application Support/fnm
+// no macOS. O ~/.fnm é das versões antigas, e o FNM_DIR vence todos. A lista
+// tinha só o ~/.fnm, e quem instalou o fnm nos últimos anos não era
+// encontrado — em nenhum dos dois sistemas.
+//
+// Listar todos em qualquer sistema é seguro: pasta inexistente é pulada, e
+// duplicatas caem na deduplicação pelo caminho real, mais adiante.
+func diretoriosDoFnm(home string) []string {
+	var dirs []string
+	if d := os.Getenv("FNM_DIR"); d != "" {
+		dirs = append(dirs, d)
+	}
+
+	dados := filepath.Join(home, ".local", "share")
+	if d := os.Getenv("XDG_DATA_HOME"); d != "" {
+		dados = d
+	}
+
+	return append(dirs,
+		filepath.Join(dados, "fnm"),
+		filepath.Join(home, "Library", "Application Support", "fnm"),
+		filepath.Join(home, ".fnm"),
+	)
 }
 
 // versoesEm lista subdiretórios de versão de um gerenciador.

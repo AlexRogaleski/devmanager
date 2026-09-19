@@ -250,3 +250,53 @@ func TestArquivoDaPlataforma(t *testing.T) {
 		t.Error("plataforma vazia")
 	}
 }
+
+// fnmFalso cria uma versão no layout do fnm: <dir>/node-versions/vX/installation/bin/node.
+func fnmFalso(t *testing.T, dirFnm, versao string) {
+	t.Helper()
+	nodeFalso(t, filepath.Join(dirFnm, "node-versions"), versao, true)
+	// nodeFalso cria <raiz>/vX/bin; o fnm guarda em <raiz>/vX/installation/bin.
+	raiz := filepath.Join(dirFnm, "node-versions", "v"+versao)
+	if err := os.MkdirAll(filepath.Join(raiz, "installation"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(raiz, "bin"), filepath.Join(raiz, "installation", "bin")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// O fnm guarda as versões no diretório de dados da plataforma — e a lista
+// tinha só o ~/.fnm das versões antigas. Quem instalou o fnm nos últimos
+// anos não era encontrado, nem no Linux nem no macOS.
+func TestNodeEncontraOFnmEmTodosOsLugares(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os binários de teste são scripts de shell")
+	}
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("NVM_DIR", "")
+	personalizado := filepath.Join(t.TempDir(), "meu-fnm")
+	t.Setenv("FNM_DIR", personalizado)
+
+	fnmFalso(t, filepath.Join(home, ".local", "share", "fnm"), "22.1.0")                // Linux
+	fnmFalso(t, filepath.Join(home, "Library", "Application Support", "fnm"), "20.1.0") // macOS
+	fnmFalso(t, filepath.Join(home, ".fnm"), "18.1.0")                                  // versões antigas
+	fnmFalso(t, personalizado, "23.1.0")                                                // FNM_DIR
+
+	encontrados, err := (&NodeSystemProvider{}).List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	achados := map[string]string{}
+	for _, r := range encontrados {
+		achados[r.Version.String()] = r.Source
+	}
+	for _, v := range []string{"22.1.0", "20.1.0", "18.1.0", "23.1.0"} {
+		if achados[v] != "fnm" {
+			t.Errorf("Node %s do fnm não encontrado (achados: %v)", v, achados)
+		}
+	}
+}
