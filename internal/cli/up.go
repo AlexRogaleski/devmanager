@@ -12,6 +12,7 @@ import (
 	"github.com/AlexRogaleski/devmanager/internal/dotenv"
 	"github.com/AlexRogaleski/devmanager/internal/prepare"
 	"github.com/AlexRogaleski/devmanager/internal/project"
+	"github.com/AlexRogaleski/devmanager/internal/runner"
 	"github.com/AlexRogaleski/devmanager/internal/services"
 )
 
@@ -65,11 +66,12 @@ func upCmd(stdio IO, args []string) error {
 	// comando vai executar. Sem isso, cairíamos no composer do PATH — que é
 	// justamente o que não funciona com PHP estático.
 	if !*dryRun {
-		phar, err := garantirComposer(ctx, w, r.ShimDir, rt.Bin)
+		phar, err := garantirComposer(ctx, w, r.ShimDir)
 		if err != nil {
 			return err
 		}
-		opts.Composer = []string{rt.Bin, phar}
+		// O php do SHIM, não o binário: é ele que carrega o php.ini.
+		opts.Composer = []string{runner.PHPPath(r.ShimDir), phar}
 	}
 
 	passos := prepare.Plano(p, r, opts)

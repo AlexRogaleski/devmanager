@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +19,7 @@ func phpQueImprimeOAmbiente(t *testing.T) runtimes.Runtime {
 	t.Helper()
 
 	bin := filepath.Join(t.TempDir(), "php")
-	script := "#!/bin/sh\nprintf 'PHPRC=%s ARGS=%s\\n' \"${PHPRC:-vazio}\" \"$*\"\n"
+	script := "#!/bin/sh\nprintf 'PHPRC=%s TERMINFO=%s ARGS=%s\\n' \"${PHPRC:-vazio}\" \"${TERMINFO:-vazio}\" \"$*\"\n"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -207,5 +208,141 @@ func TestShimRemoveOIniQuandoNaoHaPHP(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(shimDir, NomeDoPHPIni)); !os.IsNotExist(err) {
 		t.Error("o php.ini sobreviveu à remoção do PHP do shim")
+	}
+}
+
+func TestBaseDeTerminfo(t *testing.T) {
+	raiz := t.TempDir()
+	segunda := filepath.Join(raiz, "lib-terminfo")
+	if err := os.MkdirAll(segunda, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inexistente := filepath.Join(raiz, "nao-existe")
+
+	if got := baseDeTerminfo([]string{inexistente, segunda}); got != segunda {
+		t.Errorf("baseDeTerminfo = %q, queria %q", got, segunda)
+	}
+
+	// Sem base nenhuma, o shim não deve inventar um caminho: vazio é um
+	// resultado legítimo.
+	if got := baseDeTerminfo([]string{inexistente}); got != "" {
+		t.Errorf("baseDeTerminfo = %q, queria vazio", got)
+	}
+
+	// Um arquivo não é uma base.
+	arquivo := filepath.Join(raiz, "arquivo")
+	if err := os.WriteFile(arquivo, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := baseDeTerminfo([]string{arquivo}); got != "" {
+		t.Errorf("baseDeTerminfo aceitou um arquivo: %q", got)
+	}
+}
+
+// O readline do PHP estático não acha a base de terminfo sozinho, e o tinker
+// abre com duas linhas de reclamação. O shim aponta a base quando ela existe.
+func TestShimApontaOTerminfo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("o shim é um script de shell")
+	}
+	base := baseDeTerminfo(candidatosDeTerminfo)
+	if base == "" {
+		t.Skip("esta máquina não tem base de terminfo")
+	}
+
+	rt := phpQueImprimeOAmbiente(t)
+	shimDir := filepath.Join(t.TempDir(), "shim")
+	if _, err := EnsureShim(shimDir, nil, rt); err != nil {
+		t.Fatal(err)
+	}
+
+	saida, err := exec.Command(PHPPath(shimDir)).CombinedOutput()
+	if err != nil {
+		t.Fatalf("executando o shim: %v\n%s", err, saida)
+	}
+	if !strings.Contains(string(saida), "TERMINFO="+base) {
+		t.Errorf("o shim não apontou a base de terminfo: %s", saida)
+	}
+}
+
+// Quem já definiu manda: um TERMINFO próprio não é sobrescrito.
+func TestShimRespeitaTerminfoExistente(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("o shim é um script de shell")
+	}
+	if baseDeTerminfo(candidatosDeTerminfo) == "" {
+		t.Skip("esta máquina não tem base de terminfo")
+	}
+
+	rt := phpQueImprimeOAmbiente(t)
+	shimDir := filepath.Join(t.TempDir(), "shim")
+	if _, err := EnsureShim(shimDir, nil, rt); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(PHPPath(shimDir))
+	cmd.Env = append(os.Environ(), "TERMINFO=/meu/terminfo")
+	saida, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("executando o shim: %v\n%s", err, saida)
+	}
+	if !strings.Contains(string(saida), "TERMINFO=/meu/terminfo") {
+		t.Errorf("o shim sobrescreveu o TERMINFO de quem chamou: %s", saida)
+	}
+}
+
+// TestRunPHPPassaPeloShim guarda o buraco que a primeira versão do php.ini
+// deixou: o `devm artisan` chamava o binário DIRETO, sem o shim, e rodava
+// com os 128M do PHP estático sem ini — enquanto o `devm composer`, que
+// passa pelo wrapper, rodava com o ini certo. Meia funcionalidade, e a
+// metade que faltava era a mais usada.
+func TestRunPHPPassaPeloShim(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("o shim é um script de shell")
+	}
+
+	rt := phpQueImprimeOAmbiente(t)
+	shimDir := filepath.Join(t.TempDir(), "shim")
+
+	var saida strings.Builder
+	r := &Runner{Runtime: rt, ShimDir: shimDir, Stdout: &saida, Stderr: &saida}
+
+	if err := r.RunPHP(context.Background(), "-v"); err != nil {
+		t.Fatalf("RunPHP falhou: %v\n%s", err, saida.String())
+	}
+
+	ini := filepath.Join(shimDir, NomeDoPHPIni)
+	if !strings.Contains(saida.String(), "PHPRC="+ini) {
+		t.Errorf("o artisan rodaria sem o php.ini do projeto: %s", saida.String())
+	}
+	if !strings.Contains(saida.String(), "ARGS=-v") {
+		t.Errorf("os argumentos não chegaram: %s", saida.String())
+	}
+}
+
+// Um script com shebang de caminho absoluto — "#!/usr/bin/php" — é
+// redirecionado para o nosso PHP. Esse desvio também precisa passar pelo
+// shim, senão ele reintroduz o mesmo buraco por outra porta.
+func TestShebangRedirecionadoPassaPeloShim(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("o shim é um script de shell")
+	}
+
+	rt := phpQueImprimeOAmbiente(t)
+	dir := t.TempDir()
+	script := filepath.Join(dir, "ferramenta")
+	if err := os.WriteFile(script, []byte("#!/usr/bin/php\n<?php\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	shimDir := filepath.Join(dir, "shim")
+	var saida strings.Builder
+	r := &Runner{Runtime: rt, ShimDir: shimDir, Stdout: &saida, Stderr: &saida}
+
+	if err := r.Run(context.Background(), script); err != nil {
+		t.Fatalf("Run falhou: %v\n%s", err, saida.String())
+	}
+	if !strings.Contains(saida.String(), "PHPRC="+filepath.Join(shimDir, NomeDoPHPIni)) {
+		t.Errorf("o script rodaria sem o php.ini do projeto: %s", saida.String())
 	}
 }

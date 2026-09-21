@@ -88,6 +88,30 @@ func escreverPHPIni(shimDir string, extras map[string]string) (string, error) {
 	return destino, nil
 }
 
+// candidatosDeTerminfo são os lugares onde a base de terminfo costuma morar.
+//
+// A ordem é por probabilidade, não por preferência: qualquer uma serve, e a
+// primeira que existir é usada.
+var candidatosDeTerminfo = []string{
+	"/usr/share/terminfo", // Fedora, Arch, macOS
+	"/lib/terminfo",       // Debian, Ubuntu
+	"/etc/terminfo",
+	"/usr/lib/terminfo",
+}
+
+// baseDeTerminfo devolve a primeira base existente, ou "" se não houver.
+//
+// Vazio é um resultado legítimo: num sistema sem terminfo não há o que
+// apontar, e o shim simplesmente não menciona a variável.
+func baseDeTerminfo(candidatos []string) string {
+	for _, dir := range candidatos {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+	return ""
+}
+
 // escreverShimDoPHP cria o "php" do shim como script, e não como link.
 //
 // Um link não consegue levar configuração junto, e é por aí que o PHPRC
@@ -104,14 +128,31 @@ func escreverPHPIni(shimDir string, extras map[string]string) (string, error) {
 // subprocesso que o PHP criar — o PHPStan que o composer chama, por exemplo —
 // herda a mesma configuração.
 func escreverShimDoPHP(shimDir, phpBin, ini string) error {
-	conteudo := fmt.Sprintf(`#!/bin/sh
-# Gerado pelo Dev Manager — este arquivo é reescrito, não edite.
-if [ -z "${PHPRC:-}" ]; then
+	var b strings.Builder
+	b.WriteString("#!/bin/sh\n")
+	b.WriteString("# Gerado pelo Dev Manager — este arquivo é reescrito, não edite.\n")
+
+	fmt.Fprintf(&b, `if [ -z "${PHPRC:-}" ]; then
 	PHPRC=%s
 	export PHPRC
 fi
-exec %s "$@"
-`, shell.Aspas(ini), shell.Aspas(phpBin))
+`, shell.Aspas(ini))
+
+	// O readline do PHP estático não sabe onde fica a base de terminfo do
+	// sistema, e todo `artisan tinker` abre com duas linhas de reclamação:
+	// "Cannot read termcap database; using dumb terminal settings". A edição
+	// de linha e o histórico continuam funcionando — medido —, então isto é
+	// barulho, não defeito. Apontar a base cala o aviso.
+	if base := baseDeTerminfo(candidatosDeTerminfo); base != "" {
+		fmt.Fprintf(&b, `if [ -z "${TERMINFO:-}" ]; then
+	TERMINFO=%s
+	export TERMINFO
+fi
+`, shell.Aspas(base))
+	}
+
+	fmt.Fprintf(&b, "exec %s \"$@\"\n", shell.Aspas(phpBin))
+	conteudo := b.String()
 
 	destino := filepath.Join(shimDir, "php")
 	if atual, err := os.ReadFile(destino); err == nil && string(atual) == conteudo {

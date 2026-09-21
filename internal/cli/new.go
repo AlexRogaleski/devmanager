@@ -101,7 +101,7 @@ func newCmd(stdio IO, args []string) error {
 		return err
 	}
 
-	phar, err := garantirComposer(ctx, w, shimDir, php.Bin)
+	phar, err := garantirComposer(ctx, w, shimDir)
 	if err != nil {
 		return err
 	}

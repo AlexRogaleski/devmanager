@@ -16,7 +16,7 @@ import (
 //
 // É chamado só pelos comandos que realmente precisam do composer. Colocar
 // isso em ambienteDoProjeto faria todo `devm artisan` consultar a rede.
-func garantirComposer(ctx context.Context, w io.Writer, shimDir, phpBin string) (string, error) {
+func garantirComposer(ctx context.Context, w io.Writer, shimDir string) (string, error) {
 	dir, err := paths.DataDir()
 	if err != nil {
 		return "", err

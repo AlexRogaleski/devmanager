@@ -117,7 +117,7 @@ func (r *Runner) Comando(ctx context.Context, nome string, args ...string) (*exe
 	// dos pacotes de distro usa.
 	if scriptPHP, ok := ehScriptPHP(caminho); ok {
 		args = append([]string{scriptPHP}, args...)
-		caminho = r.Runtime.Bin
+		caminho = PHPPath(shim)
 	}
 
 	cmd := exec.CommandContext(ctx, caminho, args...)
@@ -130,9 +130,16 @@ func (r *Runner) Comando(ctx context.Context, nome string, args ...string) (*exe
 	return cmd, limpar, nil
 }
 
-// RunPHP executa o próprio interpretador, sem procurar nada no PATH.
+// RunPHP executa o interpretador do projeto, pelo shim.
+//
+// "php" e não o caminho do binário: o shim resolve o nome antes de qualquer
+// PATH, e é ele que carrega o php.ini do projeto. Chamando o binário direto
+// — como esta função fazia —, o `devm artisan` rodava com os 128M de memória
+// do PHP estático sem ini, enquanto o `devm composer` rodava com o ini certo,
+// porque o wrapper do composer passa pelo shim. Meia funcionalidade, e a
+// metade que faltava era a mais usada.
 func (r *Runner) RunPHP(ctx context.Context, args ...string) error {
-	return r.Run(ctx, r.Runtime.Bin, args...)
+	return r.Run(ctx, "php", args...)
 }
 
 // ambiente monta o ambiente do processo filho.

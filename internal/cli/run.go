@@ -64,7 +64,7 @@ func composerCmd(stdio IO, args []string) error {
 
 	ctx := context.Background()
 
-	phar, err := garantirComposer(ctx, stdio.Out, r.ShimDir, r.Runtime.Bin)
+	phar, err := garantirComposer(ctx, stdio.Out, r.ShimDir)
 	if err != nil {
 		return err
 	}
