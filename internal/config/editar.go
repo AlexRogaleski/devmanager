@@ -9,20 +9,21 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// modelo é o arquivo gerado quando o projeto ainda não tem um.
+// Criar grava um devmanager.yaml novo a partir de uma configuração inteira.
 //
-// Comentários explicando cada opção valem mais que documentação separada:
-// eles ficam onde a pessoa está olhando na hora da dúvida.
-const modelo = `# Dev Manager — configuração deste projeto.
-# Versione este arquivo junto com o código: ele descreve o ambiente
-# necessário para rodar o projeto.
-
-# Versão do PHP. Sobrepõe o require.php do composer.json.
-#   "8.3"     qualquer 8.3.x
-#   "8.3.15"  exatamente essa
-#   "^8.3"    8.3 ou superior, abaixo de 9.0
-php: "%s"
-`
+// Existe para quem já sabe tudo que vai escrever — o `devm new`, que decidiu
+// PHP, Node e banco antes de tocar no disco. Fazer isso com três SetChave
+// seguidos deixaria o arquivo com o valor ativo longe do comentário que o
+// explica, porque cada edição posterior entra no fim do documento.
+//
+// Sobrescreve: a decisão de não apagar arquivo alheio é de quem chama.
+func Criar(dir string, c Config) error {
+	caminho := Path(dir)
+	if err := os.MkdirAll(filepath.Dir(caminho), 0o755); err != nil {
+		return fmt.Errorf("criando %s: %w", filepath.Dir(caminho), err)
+	}
+	return escreverAtomico(caminho, []byte(Modelo(c)))
+}
 
 // SetChave grava (ou remove, se valor vazio) uma chave escalar.
 //
@@ -40,12 +41,18 @@ func SetChave(dir, chave, valor string) error {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("lendo %s: %w", caminho, err)
 		}
-		// Arquivo novo com só esta chave: o modelo comentado é do php, então
-		// para outras chaves geramos o mínimo.
-		if chave == "php" {
-			return escreverAtomico(caminho, []byte(fmt.Sprintf(modelo, valor)))
+		// Arquivo novo: geramos o modelo inteiro, com esta chave ativa e as
+		// demais documentadas em comentário.
+		var novo Config
+		switch chave {
+		case "php":
+			novo.PHP = valor
+		case "node":
+			novo.Node = valor
+		default:
+			return escreverAtomico(caminho, []byte(fmt.Sprintf("%s: %q\n", chave, valor)))
 		}
-		return escreverAtomico(caminho, []byte(fmt.Sprintf("%s: %q\n", chave, valor)))
+		return escreverAtomico(caminho, []byte(Modelo(novo)))
 	}
 
 	var doc yaml.Node
@@ -76,6 +83,13 @@ func SetLista(dir, chave string, valores []string) error {
 	dados, err := os.ReadFile(caminho)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("lendo %s: %w", caminho, err)
+	}
+
+	if len(dados) == 0 && chave == "services" {
+		if err := os.MkdirAll(filepath.Dir(caminho), 0o755); err != nil {
+			return fmt.Errorf("criando %s: %w", filepath.Dir(caminho), err)
+		}
+		return escreverAtomico(caminho, []byte(Modelo(Config{Services: valores})))
 	}
 
 	var doc yaml.Node
@@ -174,7 +188,7 @@ func SetPHP(dir, versao string) error {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("lendo %s: %w", caminho, err)
 		}
-		return escreverAtomico(caminho, []byte(fmt.Sprintf(modelo, versao)))
+		return escreverAtomico(caminho, []byte(Modelo(Config{PHP: versao})))
 	}
 
 	// yaml.Node é a representação em árvore do documento, e o yaml.v3 guarda

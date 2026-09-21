@@ -129,11 +129,13 @@ func stopCmd(w io.Writer, args []string) error {
 			return nil
 		}
 		for _, amb := range lista {
-			if _, err := c.Stop(ctx, amb.Projeto); err != nil {
+			parado, err := c.Stop(ctx, amb.Projeto)
+			if err != nil {
 				fmt.Fprintf(w, "%s: %v\n", amb.Projeto, err)
 				continue
 			}
 			fmt.Fprintf(w, "%s parado\n", amb.Projeto)
+			avisarServicosParados(w, parado)
 		}
 		return nil
 	}
@@ -143,11 +145,23 @@ func stopCmd(w io.Writer, args []string) error {
 		return err
 	}
 
-	if _, err := c.Stop(ctx, nome); err != nil {
+	parado, err := c.Stop(ctx, nome)
+	if err != nil {
 		return err
 	}
 	fmt.Fprintf(w, "%s parado\n", nome)
+	avisarServicosParados(w, parado)
 	return nil
+}
+
+// avisarServicosParados conta o que foi desligado junto com o ambiente.
+//
+// Desligar em silêncio seria pior que não desligar: quem visse o banco fora
+// do ar depois de um `devm stop` procuraria o problema no lugar errado.
+func avisarServicosParados(w io.Writer, amb daemon.Ambiente) {
+	for _, servico := range amb.ServicosParados {
+		fmt.Fprintf(w, "  %s parado também (nenhum projeto ativo usa)\n", servico)
+	}
 }
 
 // logsCmd mostra os logs de um ambiente.

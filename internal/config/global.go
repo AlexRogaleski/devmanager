@@ -34,6 +34,14 @@ type Global struct {
 	// quem quer o contrário — em sistemas imutáveis o podman rootless é a
 	// escolha melhor, e nada além desta chave faz a detecção saber disso.
 	Engine string `yaml:"engine,omitempty"`
+
+	// ManterServicos desliga a parada automática de serviços ociosos.
+	//
+	// O padrão é parar: um contêiner ligado deve significar que algum
+	// projeto ativo precisa dele. Quem usa o banco fora do Dev Manager — um
+	// cliente gráfico aberto o dia inteiro, um script que consulta direto —
+	// liga esta chave e assume o controle.
+	ManterServicos bool `yaml:"keep_services,omitempty"`
 }
 
 // GlobalPath devolve onde a configuração do usuário fica.

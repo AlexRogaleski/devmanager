@@ -145,7 +145,10 @@ func (s *Servidor) rotaStop(w http.ResponseWriter, r *http.Request) {
 	amb.anel.Fechar()
 
 	s.logf("ambiente %q parado", nome)
-	escreverJSON(w, http.StatusOK, amb.snapshot())
+
+	instantaneo := amb.snapshot()
+	instantaneo.ServicosParados = s.pararServicosOciosos(r.Context())
+	escreverJSON(w, http.StatusOK, instantaneo)
 }
 
 // rotaLogs devolve o histórico e, com ?follow=1, continua transmitindo.

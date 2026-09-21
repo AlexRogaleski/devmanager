@@ -42,6 +42,10 @@ const EncerramentoPadrao = 5 * time.Second
 type Supervisor struct {
 	Processos []Processo
 
+	// Ambiente são variáveis extras para todos os processos, no formato
+	// "CHAVE=valor". É por aqui que as portas do ambiente chegam a eles.
+	Ambiente []string
+
 	// Runner fornece o ambiente do projeto: PHP correto, shim no PATH,
 	// diretório de trabalho.
 	Runner *runner.Runner
@@ -222,6 +226,10 @@ func (s *Supervisor) montar(ctx context.Context, args []string, saida io.Writer,
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// As variáveis do ambiente entram DEPOIS das do Runner: o cmd.Env já
+	// veio montado, e só acrescentamos o que é nosso.
+	cmd.Env = append(cmd.Env, s.Ambiente...)
 
 	isolarGrupo(cmd)
 

@@ -114,6 +114,10 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (Servico, error) {
 		return Servico{}, err
 	}
 
+	if estado != EstadoAusente {
+		m.DesligarReinicioAutomatico(ctx, spec)
+	}
+
 	switch estado {
 	case EstadoRodando:
 		// Portas REAIS, não as do catálogo: o contêiner pode ter sido criado
@@ -158,6 +162,19 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (Servico, error) {
 	s.Estado = EstadoRodando
 	s.Portas = spec.Portas
 	return s, nil
+}
+
+// DesligarReinicioAutomatico tira a política de reinício de um contêiner
+// criado por uma versão antiga do Dev Manager.
+//
+// Sem isto, os contêineres que já existem na máquina de quem atualiza
+// continuariam ressuscitando a cada boot — a correção só valeria para
+// contêineres criados do zero.
+//
+// O erro é ignorado por dois motivos: `update` não existe em engines
+// antigos, e a falta dele não impede o que o usuário pediu (subir o serviço).
+func (m *Manager) DesligarReinicioAutomatico(ctx context.Context, spec Spec) {
+	_ = m.executar(ctx, "update", "--restart", "no", spec.Container())
 }
 
 // Stop para um serviço sem apagar nada.
@@ -218,10 +235,16 @@ func (m *Manager) criar(ctx context.Context, spec Spec) error {
 		"run", "--detach",
 		"--name", spec.Container(),
 		"--label", rotulo,
-		// Reiniciar sozinho depois de um reboot é o que faz o serviço
-		// "simplesmente estar lá" no dia seguinte. "unless-stopped" respeita
-		// um stop deliberado, diferente de "always".
-		"--restart", "unless-stopped",
+		// Sem política de reinício, de propósito.
+		//
+		// A versão anterior usava "unless-stopped", para o serviço
+		// "simplesmente estar lá" no dia seguinte. O efeito real era outro:
+		// quem reiniciava a máquina com quatro contêineres de pé voltava com
+		// os quatro rodando, sem projeto nenhum ativo — MySQL ligado por
+		// causa de um projeto PostgreSQL que subira dias antes.
+		//
+		// Quem decide que um serviço precisa estar de pé é o projeto que
+		// está rodando agora, e o Dev Manager sobe o que falta em segundos.
 	}
 
 	for _, p := range spec.Portas {

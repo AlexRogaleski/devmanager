@@ -122,7 +122,13 @@ suba o banco e o crie.
 
 ### Configurar um projeto existente
 
-Crie um `devmanager.yaml` na raiz e versione junto com o código:
+```sh
+devm init          # cria o devmanager.yaml com todas as opções documentadas
+devm init --print  # só mostra o modelo, para quem já tem o arquivo
+```
+
+O arquivo gerado traz cada opção explicada e exemplificada em comentário.
+Versione junto com o código:
 
 ```yaml
 php: "8.4"
@@ -137,6 +143,31 @@ services:
 Sem o arquivo, o Dev Manager lê o `require.php` do `composer.json` e usa a
 maior versão compatível instalada. O `devmanager.yaml` vence a detecção
 automática — é como se fixa a versão que roda em produção.
+
+#### Processos
+
+Sem declarar nada, `devm start` sobe `php artisan serve` mais o script de
+desenvolvimento do `package.json`. Para mudar isso — acrescentar um worker de
+fila, um servidor de SSR — declare `processes`, que substitui o padrão inteiro:
+
+```yaml
+processes:
+  serve: php artisan serve --host=127.0.0.1 --port={{port}}
+  queue: php artisan queue:listen --tries=1
+  vite: npm run dev -- --port {{port:vite}}
+```
+
+`{{port}}` recebe a porta que o ambiente ganhou, e é nela que o proxy publica
+`<projeto>.test`. Fixar um número no lugar do marcador funciona, mas passa a
+ser sua responsabilidade não colidir com outro projeto.
+
+`{{port:nome}}` pede uma porta extra para um segundo processo que também
+escute. Ela é sorteada uma vez e vale para o ambiente todo, então dois
+processos podem se referir a ela pelo mesmo nome.
+
+Os processos recebem as portas no ambiente — `DEVM_PORT` para a principal e
+`DEVM_PORT_VITE` para `{{port:vite}}` —, que é como o `vite.config.js`
+descobre onde o backend subiu sem ninguém escrever número nenhum.
 
 ```sh
 devm add .           # registra o projeto
@@ -197,6 +228,7 @@ devolve o terminal como estava, e nada é acrescentado ao seu `.bashrc` ou
 devm service catalog              # o que dá para subir
 devm service list                 # o que está rodando
 devm service start postgres:17    # sobe avulso
+devm service stop --unused        # para os que nenhum projeto ativo usa
 devm service remove redis --data  # remove; --data apaga o volume
 devm service engine docker        # fixa o runtime de contêiner
 ```
@@ -209,6 +241,18 @@ um projeto chamado `minha-app` recebe o banco `minha_app`, criado
 automaticamente, e as credenciais vão para o `.env`.
 
 Se a porta oficial estiver ocupada, outra livre é escolhida e anunciada.
+
+Serviço ligado significa "algum projeto ativo precisa dele": ao derrubar um
+ambiente, os serviços que o Dev Manager subiu para ele e que nenhum outro
+ambiente usa são parados junto, e os dados ficam no volume. Um serviço que
+você subiu à mão com `devm service start` é seu e não é desligado.
+
+Quem usa o banco fora do Dev Manager o dia inteiro pode desligar esse
+comportamento no `~/.config/devmanager/config.yaml`:
+
+```yaml
+keep_services: true
+```
 
 ### Versões de PHP
 

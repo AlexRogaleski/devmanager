@@ -52,16 +52,26 @@ type Processo struct {
 
 // Ambiente é um projeto rodando sob o daemon.
 type Ambiente struct {
-	Projeto   string     `json:"project"`
-	Caminho   string     `json:"path"`
-	PHP       string     `json:"php,omitempty"`
-	Porta     int        `json:"port,omitempty"`
-	Dominio   string     `json:"domain,omitempty"`
+	Projeto string `json:"project"`
+	Caminho string `json:"path"`
+	PHP     string `json:"php,omitempty"`
+	Porta   int    `json:"port,omitempty"`
+	Dominio string `json:"domain,omitempty"`
+
+	// PortasExtras são as portas nomeadas que o projeto pediu com
+	// {{port:nome}} no devmanager.yaml, por nome do marcador.
+	PortasExtras map[string]int `json:"extra_ports,omitempty"`
+
 	Processos []Processo `json:"processes"`
 	DesdeQue  time.Time  `json:"started_at"`
 
 	// Erro descreve por que o ambiente parou sozinho, quando foi o caso.
 	Erro string `json:"error,omitempty"`
+
+	// ServicosParados são os serviços desligados junto com este ambiente,
+	// por terem ficado sem nenhum projeto ativo que os usasse. Vem
+	// preenchido só na resposta do stop.
+	ServicosParados []string `json:"stopped_services,omitempty"`
 }
 
 // Rodando informa se ainda há processo de pé neste ambiente.

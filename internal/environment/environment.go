@@ -15,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"github.com/AlexRogaleski/devmanager/internal/config"
 	"github.com/AlexRogaleski/devmanager/internal/paths"
@@ -137,13 +136,27 @@ func NovoRunner(p *project.Project, rt runtimes.Runtime) (*runner.Runner, error)
 	return r, nil
 }
 
-// Processos decide o que subir para este projeto.
+// Processos decide o que subir para este projeto, e em que portas.
 //
 // O devmanager.yaml, quando define processes, tem a palavra final: o projeto
 // sabe melhor que a ferramenta o que precisa rodar. Sem ele, montamos um
 // padrão a partir do que o projeto É — um Laravel com package.json quer
 // servidor e bundler.
-func Processos(p *project.Project, porta int) ([]supervisor.Processo, error) {
+//
+// O padrão escreve MarcadorPorta na linha do servidor em vez do número já
+// resolvido. Não é rodeio: é o mesmo caminho que um projeto percorre quando
+// declara os próprios processos, então o mecanismo dos marcadores está
+// sempre exercitado — inclusive por quem nunca escreveu um.
+func Processos(p *project.Project, porta int) (Execucao, error) {
+	procs, err := processosDeclarados(p)
+	if err != nil {
+		return Execucao{}, err
+	}
+	return resolverPortas(procs, porta, PortaLivre)
+}
+
+// processosDeclarados monta a lista crua, ainda com os marcadores.
+func processosDeclarados(p *project.Project) ([]supervisor.Processo, error) {
 	if p.Config != nil && len(p.Config.Processes) > 0 {
 		nomes := make([]string, 0, len(p.Config.Processes))
 		for nome := range p.Config.Processes {
@@ -166,7 +179,7 @@ func Processos(p *project.Project, porta int) ([]supervisor.Processo, error) {
 	if p.IsLaravel() {
 		procs = append(procs, supervisor.Processo{
 			Nome:  "serve",
-			Linha: fmt.Sprintf("php artisan serve --host=127.0.0.1 --port=%d", porta),
+			Linha: "php artisan serve --host=127.0.0.1 --port=" + MarcadorPorta,
 		})
 	}
 
@@ -178,40 +191,12 @@ func Processos(p *project.Project, porta int) ([]supervisor.Processo, error) {
 		return nil, fmt.Errorf(
 			"nenhum processo para rodar neste projeto\n"+
 				"  declare processes no %s, por exemplo:\n\n"+
-				"  processes:\n    serve: php artisan serve\n    queue: php artisan queue:work\n",
-			config.FileName)
+				"  processes:\n"+
+				"    serve: php artisan serve --host=127.0.0.1 --port=%s\n"+
+				"    queue: php artisan queue:work\n",
+			config.FileName, MarcadorPorta)
 	}
 	return procs, nil
-}
-
-// Filtrar restringe a lista aos processos pedidos.
-func Filtrar(procs []supervisor.Processo, querido []string) ([]supervisor.Processo, error) {
-	if len(querido) == 0 {
-		return procs, nil
-	}
-
-	pedidos := make(map[string]bool, len(querido))
-	for _, nome := range querido {
-		pedidos[nome] = true
-	}
-
-	var saida []supervisor.Processo
-	for _, p := range procs {
-		if pedidos[p.Nome] {
-			saida = append(saida, p)
-			delete(pedidos, p.Nome)
-		}
-	}
-
-	if len(pedidos) > 0 {
-		faltando := make([]string, 0, len(pedidos))
-		for nome := range pedidos {
-			faltando = append(faltando, nome)
-		}
-		slices.Sort(faltando)
-		return nil, fmt.Errorf("processo(s) não configurado(s): %v", faltando)
-	}
-	return saida, nil
 }
 
 // ScriptDeFrontend descobre o comando de desenvolvimento do package.json.
@@ -272,14 +257,4 @@ func PortaLivre() (int, error) {
 	defer l.Close()
 
 	return l.Addr().(*net.TCPAddr).Port, nil
-}
-
-// TemServidor informa se algum processo é o servidor da aplicação.
-func TemServidor(procs []supervisor.Processo) bool {
-	for _, p := range procs {
-		if strings.Contains(p.Linha, "artisan serve") {
-			return true
-		}
-	}
-	return false
 }

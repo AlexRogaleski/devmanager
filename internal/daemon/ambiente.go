@@ -20,13 +20,22 @@ import (
 // caiu não tem processos rodando, e um arquivo dizendo o contrário seria
 // pior que nenhuma informação.
 type ambiente struct {
-	nome     string
-	caminho  string
-	php      string
-	porta    int
-	dominio  string
-	anel     *Anel
-	desdeQue time.Time
+	nome    string
+	caminho string
+	php     string
+	porta   int
+	dominio string
+
+	// portasExtras são as portas nomeadas ({{port:vite}}) deste ambiente.
+	// Ficam na API para que um cliente — a CLI hoje, uma interface gráfica
+	// depois — possa mostrar onde cada processo atende.
+	portasExtras map[string]int
+	anel         *Anel
+	desdeQue     time.Time
+
+	// servicos são os serviços que o projeto declara. Guardados aqui para
+	// responder "alguém ainda usa este contêiner?" quando outro ambiente cai.
+	servicos []services.Spec
 
 	cancelar  context.CancelFunc
 	encerrado chan struct{} // fechado quando o supervisor retorna
@@ -45,14 +54,15 @@ func (a *ambiente) snapshot() Ambiente {
 	copy(procs, a.processos)
 
 	return Ambiente{
-		Projeto:   a.nome,
-		Caminho:   a.caminho,
-		PHP:       a.php,
-		Porta:     a.porta,
-		Dominio:   a.dominio,
-		Processos: procs,
-		DesdeQue:  a.desdeQue,
-		Erro:      a.erro,
+		Projeto:      a.nome,
+		PortasExtras: a.portasExtras,
+		Caminho:      a.caminho,
+		PHP:          a.php,
+		Porta:        a.porta,
+		Dominio:      a.dominio,
+		Processos:    procs,
+		DesdeQue:     a.desdeQue,
+		Erro:         a.erro,
 	}
 }
 
@@ -103,7 +113,8 @@ func (s *Servidor) subir(ctx context.Context, caminho string, nome string, pedid
 		anel.Escrever("devm", fmt.Sprintf(formato, args...), time.Now())
 	}
 
-	if err := s.garantirServicos(ctx, p, r, anel, registrar); err != nil {
+	specs, err := s.garantirServicos(ctx, p, r, anel, registrar)
+	if err != nil {
 		return nil, err
 	}
 
@@ -114,15 +125,15 @@ func (s *Servidor) subir(ctx context.Context, caminho string, nome string, pedid
 		}
 	}
 
-	procs, err := environment.Processos(p, porta)
+	exec, err := environment.Processos(p, porta)
 	if err != nil {
 		return nil, err
 	}
-	if procs, err = environment.Filtrar(procs, pedido.Apenas); err != nil {
+	if exec, err = exec.Filtrar(pedido.Apenas); err != nil {
 		return nil, err
 	}
 	if pedido.SemNode {
-		procs = semFrontend(procs)
+		exec = exec.SemFrontend()
 	}
 
 	ctxAmb, cancelar := context.WithCancel(context.Background())
@@ -130,6 +141,7 @@ func (s *Servidor) subir(ctx context.Context, caminho string, nome string, pedid
 	amb := &ambiente{
 		nome:      nome,
 		caminho:   p.Path,
+		servicos:  specs,
 		php:       rt.Version.String(),
 		anel:      anel,
 		desdeQue:  time.Now(),
@@ -137,13 +149,17 @@ func (s *Servidor) subir(ctx context.Context, caminho string, nome string, pedid
 		encerrado: make(chan struct{}),
 	}
 
-	if environment.TemServidor(procs) {
-		amb.porta = porta
+	// A porta vem da Execucao, e não da variável local: um projeto que
+	// declarou `processes` com --port fixo escuta onde ELE disse, e é essa
+	// porta que o proxy precisa publicar.
+	if exec.Porta != 0 {
+		amb.porta = exec.Porta
 		amb.dominio = p.Domain()
 	}
+	amb.portasExtras = exec.Extras
 
-	amb.processos = make([]Processo, 0, len(procs))
-	for _, proc := range procs {
+	amb.processos = make([]Processo, 0, len(exec.Processos))
+	for _, proc := range exec.Processos {
 		amb.processos = append(amb.processos, Processo{
 			Nome:   proc.Nome,
 			Linha:  proc.Linha,
@@ -152,7 +168,8 @@ func (s *Servidor) subir(ctx context.Context, caminho string, nome string, pedid
 	}
 
 	sup := &supervisor.Supervisor{
-		Processos: procs,
+		Processos: exec.Processos,
+		Ambiente:  exec.Ambiente(),
 		Runner:    r,
 		// Saida fica nil: o daemon não tem terminal. SaidaDe manda cada
 		// processo para o anel, com o nome preservado.
@@ -197,13 +214,13 @@ func (s *Servidor) garantirServicos(
 	ex prepare.Executor,
 	anel *Anel,
 	registrar func(string, ...any),
-) error {
+) ([]services.Spec, error) {
 	specs, err := prepare.SpecsDoProjeto(p)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(specs) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	engine, err := services.DetectarConfigurado(ctx)
@@ -212,10 +229,13 @@ func (s *Servidor) garantirServicos(
 		// para um projeto que use SQLite, e o erro fica registrado no log
 		// em vez de impedir o start.
 		registrar("aviso: serviços não podem subir — %v", err)
-		return nil
+		return nil, nil
 	}
 
 	m := &services.Manager{Engine: engine, Saida: anel.Escritor("devm")}
+
+	// Quem já estava de pé antes de nós não é nosso para desligar depois.
+	antes := containersRodando(ctx, m)
 
 	pendentes := prepare.Pendentes(prepare.Plano(p, ex, prepare.Opcoes{
 		Servicos: m,
@@ -234,24 +254,30 @@ func (s *Servidor) garantirServicos(
 
 		registrar("%s...", passo.Nome)
 		if err := passo.Executar(ctx); err != nil {
-			return fmt.Errorf("%s: %w", passo.Nome, err)
+			return nil, fmt.Errorf("%s: %w", passo.Nome, err)
 		}
 	}
-	return nil
+
+	// Comparar o depois com o antes é mais exato que confiar no plano: um
+	// passo pode ter sido pulado, e um contêiner pode ter subido por outro
+	// caminho no meio do caminho.
+	depois := containersRodando(ctx, m)
+	for _, spec := range specs {
+		container := spec.Container()
+		if depois[container] && !antes[container] {
+			s.registrarSubido(spec)
+		}
+
+		// Vale também para quem JÁ estava rodando: um contêiner criado por
+		// uma versão antiga do devm continuaria voltando sozinho a cada
+		// boot se nunca fosse parado, e é justamente esse que escaparia da
+		// correção feita na criação.
+		m.DesligarReinicioAutomatico(ctx, spec)
+	}
+	return specs, nil
 }
 
 func ehPassoDeServico(nome string) bool {
 	const prefixo = "serviço "
 	return len(nome) > len(prefixo) && nome[:len(prefixo)] == prefixo
-}
-
-func semFrontend(procs []supervisor.Processo) []supervisor.Processo {
-	var saida []supervisor.Processo
-	for _, p := range procs {
-		if p.Nome == "vite" {
-			continue
-		}
-		saida = append(saida, p)
-	}
-	return saida
 }

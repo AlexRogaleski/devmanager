@@ -63,13 +63,13 @@ func startCmd(stdio IO, args []string) error {
 		}
 	}
 
-	processos, err := environment.Processos(p, *porta)
+	exec, err := environment.Processos(p, *porta)
 	if err != nil {
 		return err
 	}
 
 	if *apenas != "" {
-		processos, err = environment.Filtrar(processos, strings.Split(*apenas, ","))
+		exec, err = exec.Filtrar(strings.Split(*apenas, ","))
 		if err != nil {
 			return err
 		}
@@ -82,7 +82,7 @@ func startCmd(stdio IO, args []string) error {
 	fmt.Fprintf(w, "PHP     %s\n\n", rt.Version)
 
 	if *listar {
-		for _, proc := range processos {
+		for _, proc := range exec.Processos {
 			fmt.Fprintf(w, "  %-8s %s\n", proc.Nome, proc.Linha)
 		}
 		return nil
@@ -95,12 +95,17 @@ func startCmd(stdio IO, args []string) error {
 		return err
 	}
 
-	if environment.TemServidor(processos) {
-		fmt.Fprintf(w, "servidor em http://127.0.0.1:%d\n\n", *porta)
+	if exec.Porta != 0 {
+		fmt.Fprintf(w, "servidor em http://127.0.0.1:%d\n", exec.Porta)
 	}
+	for _, nome := range chavesOrdenadas(exec.Extras) {
+		fmt.Fprintf(w, "%-8s em http://127.0.0.1:%d\n", nome, exec.Extras[nome])
+	}
+	fmt.Fprintln(w)
 
 	s := &supervisor.Supervisor{
-		Processos: processos,
+		Processos: exec.Processos,
+		Ambiente:  exec.Ambiente(),
 		Runner:    r,
 		Saida:     w,
 		Cores:     ehTerminal(w),

@@ -184,7 +184,11 @@ func serviceStartCmd(w io.Writer, args []string) error {
 }
 
 func serviceStopCmd(w io.Writer, args []string) error {
-	spec, _, err := specDosArgs(w, args, "stop")
+	fs := flag.NewFlagSet("service stop", flag.ContinueOnError)
+	fs.SetOutput(w)
+	ociosos := fs.Bool("unused", false, "para os serviços que nenhum projeto ativo usa")
+
+	posicionais, err := parseArgs(fs, args)
 	if err != nil {
 		return err
 	}
@@ -194,6 +198,19 @@ func serviceStopCmd(w io.Writer, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	if *ociosos {
+		return pararOciosos(ctx, w, m)
+	}
+
+	if len(posicionais) == 0 {
+		return fmt.Errorf("uso: devm service stop <serviço[:versão]> | devm service stop --unused")
+	}
+	spec, err := services.ParseSpec(posicionais[0])
+	if err != nil {
+		return err
+	}
+
 	if err := m.Stop(ctx, spec); err != nil {
 		return err
 	}
@@ -307,7 +324,12 @@ func enriquecerErroDePorta(err error, spec services.Spec) error {
 		err, spec.Nome, spec.Versao, livre)
 }
 
-func chavesOrdenadas(m map[string]string) []string {
+// chavesOrdenadas devolve as chaves de um mapa em ordem alfabética.
+//
+// O [V any] é um parâmetro de TIPO: a função serve a qualquer mapa com chave
+// string, seja de credenciais (map[string]string) ou de portas
+// (map[string]int). Sem isso seriam duas funções idênticas.
+func chavesOrdenadas[V any](m map[string]V) []string {
 	chaves := make([]string, 0, len(m))
 	for k := range m {
 		chaves = append(chaves, k)

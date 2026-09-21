@@ -216,25 +216,19 @@ func finalizarProjetoNovo(w io.Writer, destino string, php runtimes.Runtime, ver
 		return nil
 	}
 
-	// Fixamos a versão MAIOR.MENOR, não a exata: o projeto deve acompanhar
-	// os patches sem precisar editar o arquivo a cada atualização.
-	if err := config.SetChave(destino, "php", php.Version.MajorMinor()); err != nil {
-		return err
-	}
-	if versaoNode != "" {
-		if err := config.SetChave(destino, "node", versaoNode); err != nil {
-			return err
-		}
-	}
-
 	// A escolha de banco feita no instalador vira um serviço declarado: sem
 	// isso o .env apontaria para um MySQL que ninguém subiu, e o primeiro
 	// `artisan migrate` falharia sem explicação.
 	servico := servicoDoBanco(banco)
+
+	// Fixamos a versão MAIOR.MENOR, não a exata: o projeto deve acompanhar
+	// os patches sem precisar editar o arquivo a cada atualização.
+	novo := config.Config{PHP: php.Version.MajorMinor(), Node: versaoNode}
 	if servico != "" {
-		if err := config.SetLista(destino, "services", []string{servico}); err != nil {
-			return err
-		}
+		novo.Services = []string{servico}
+	}
+	if err := config.Criar(destino, novo); err != nil {
+		return err
 	}
 
 	fmt.Fprintf(w, "\n%s criado\n", filepath.Base(destino))

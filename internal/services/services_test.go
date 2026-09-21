@@ -87,7 +87,6 @@ func TestStartCriaContainer(t *testing.T) {
 	exigidos := map[string]string{
 		"--name devm-postgres-17":          "nome determinístico do contêiner",
 		"--label devmanager=1":             "rótulo que evita mexer em contêiner alheio",
-		"--restart unless-stopped":         "sobrevive a reboot, respeita stop deliberado",
 		"127.0.0.1:5432:5432":              "publicado SÓ no loopback",
 		"--volume devm-postgres-17-dados:": "volume nomeado, não bind mount",
 		"--env POSTGRES_PASSWORD=secret":   "credenciais de desenvolvimento",
@@ -97,6 +96,12 @@ func TestStartCriaContainer(t *testing.T) {
 		if !strings.Contains(linhaRun, trecho) {
 			t.Errorf("faltou %q (%s)\n  run: %s", trecho, porque, linhaRun)
 		}
+	}
+
+	// E o que NÃO pode estar lá: uma política de reinício faria o serviço
+	// voltar sozinho no próximo boot, sem projeto algum precisando dele.
+	if strings.Contains(linhaRun, "--restart") {
+		t.Errorf("o contêiner não pode pedir reinício automático:\n  run: %s", linhaRun)
 	}
 }
 

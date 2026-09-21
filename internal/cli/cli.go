@@ -38,6 +38,8 @@ func Run(args []string, stdio IO) error {
 	switch comando {
 	case "new":
 		return newCmd(stdio, resto)
+	case "init":
+		return initCmd(stdio, resto)
 	case "detect":
 		return detectCmd(stdio.Out, resto)
 	case "php":
@@ -112,6 +114,7 @@ Uso:
 
 Projetos:
   new        cria um projeto Laravel do zero
+  init       gera o devmanager.yaml com todas as opções documentadas
   list       lista os projetos registrados e o estado de cada um
   add        registra um projeto
   scan       registra todos os projetos de um diretório
@@ -134,7 +137,7 @@ Serviços:
   service catalog  lista os serviços que podem ser criados
   service list     mostra os serviços nesta máquina
   service start    sobe um serviço (ex.: devm service start postgres:17)
-  service stop     para um serviço, preservando os dados
+  service stop     para um serviço (--unused para os sem projeto ativo)
   service logs     mostra os logs de um serviço
   service remove   remove o contêiner (--data apaga também os dados)
   service engine   mostra ou fixa o runtime (auto, docker, podman)

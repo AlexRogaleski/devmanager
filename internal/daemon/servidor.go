@@ -19,6 +19,7 @@ import (
 	"github.com/AlexRogaleski/devmanager/internal/paths"
 	"github.com/AlexRogaleski/devmanager/internal/proxy"
 	"github.com/AlexRogaleski/devmanager/internal/registry"
+	"github.com/AlexRogaleski/devmanager/internal/services"
 )
 
 // NomeDoSocket é o arquivo de socket dentro do diretório de runtime.
@@ -34,6 +35,11 @@ type Servidor struct {
 
 	mu        sync.Mutex
 	ambientes map[string]*ambiente
+
+	// subidos são os serviços que ESTE daemon colocou de pé, por contêiner.
+	// É o que distingue um serviço nosso de um que já estava rodando quando
+	// chegamos — só o primeiro pode ser desligado quando fica ocioso.
+	subidos map[string]services.Spec
 
 	// tabela é compartilhada com o proxy: o daemon escreve as rotas quando
 	// um ambiente sobe, e o proxy as lê a cada requisição.
@@ -279,6 +285,10 @@ func (s *Servidor) Encerrar() error {
 		ambientes = append(ambientes, amb)
 		amb.cancelar()
 	}
+	// Esquecer os ambientes aqui é o que torna os serviços deles ociosos:
+	// enquanto estiverem no mapa, a contabilidade os considera em uso e
+	// nada é desligado.
+	clear(s.ambientes)
 	s.mu.Unlock()
 
 	prazo := time.After(20 * time.Second)
@@ -290,6 +300,10 @@ func (s *Servidor) Encerrar() error {
 		}
 		amb.anel.Fechar()
 	}
+
+	// Com todos os ambientes derrubados, nenhum serviço nosso tem mais
+	// usuário: o daemon sai sem deixar contêiner ligado para trás.
+	s.pararServicosOciosos(context.Background())
 
 	if s.dns != nil {
 		_ = s.dns.Encerrar()
