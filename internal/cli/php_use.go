@@ -139,7 +139,7 @@ func sincronizarAmbiente(w io.Writer, p *project.Project, rt runtimeInfo) error 
 	if err != nil {
 		return err
 	}
-	if _, err := runner.EnsureShim(shim, rt); err != nil {
+	if _, err := runner.EnsureShim(shim, p.PHPIni(), rt); err != nil {
 		return err
 	}
 

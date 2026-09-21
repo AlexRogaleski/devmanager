@@ -44,6 +44,10 @@ type Runner struct {
 	// Runner criar um temporário e removê-lo no fim — útil em testes e em
 	// execuções avulsas que não pertencem a nenhum projeto.
 	ShimDir string
+
+	// PHPIni sobrepõe os padrões do Dev Manager no php.ini do shim, com o
+	// que o projeto declarou no devmanager.yaml.
+	PHPIni map[string]string
 }
 
 // Run executa um comando e espera ele terminar.
@@ -170,7 +174,7 @@ func (r *Runner) prepararShim() (dir string, limpar func(), err error) {
 	todos := append([]runtimes.Runtime{r.Runtime}, r.Extras...)
 
 	if r.ShimDir != "" {
-		dir, err := EnsureShim(r.ShimDir, todos...)
+		dir, err := EnsureShim(r.ShimDir, r.PHPIni, todos...)
 		return dir, func() {}, err
 	}
 
@@ -180,7 +184,7 @@ func (r *Runner) prepararShim() (dir string, limpar func(), err error) {
 	}
 	limpar = func() { os.RemoveAll(dir) }
 
-	if _, err := EnsureShim(dir, todos...); err != nil {
+	if _, err := EnsureShim(dir, r.PHPIni, todos...); err != nil {
 		limpar()
 		return "", nil, err
 	}

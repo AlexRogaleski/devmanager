@@ -97,7 +97,7 @@ func newCmd(stdio IO, args []string) error {
 		runtimesDoShim = append(runtimesDoShim, node)
 	}
 
-	if _, err := runner.EnsureShim(shimDir, runtimesDoShim...); err != nil {
+	if _, err := runner.EnsureShim(shimDir, nil, runtimesDoShim...); err != nil {
 		return err
 	}
 

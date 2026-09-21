@@ -34,11 +34,20 @@ type Config struct {
 	// "22" (qualquer 22.x), "22.11.0" (exata), "^22" (faixa).
 	Node string `yaml:"node,omitempty"`
 
-	// Campos abaixo ainda não são usados, mas já definem o formato para os
-	// próximos passos. Declará-los agora evita quebrar arquivos existentes
-	// quando as features chegarem.
 	Services  []string          `yaml:"services,omitempty"`
 	Processes map[string]string `yaml:"processes,omitempty"`
+
+	// PHPIni sobrepõe diretivas do php.ini que o Dev Manager gera.
+	//
+	// Existe porque o padrão não serve a todo projeto: um que processe
+	// planilhas grandes pode querer mais tempo de execução, outro pode
+	// precisar de um upload maior que os 100M que vêm de fábrica. Os
+	// valores são gravados como estão, sem interpretação:
+	//
+	//	php_ini:
+	//	  memory_limit: 512M
+	//	  max_execution_time: 120
+	PHPIni map[string]string `yaml:"php_ini,omitempty"`
 }
 
 // Path devolve o caminho do arquivo de configuração de um diretório.

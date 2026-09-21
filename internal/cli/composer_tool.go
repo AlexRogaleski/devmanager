@@ -26,7 +26,7 @@ func garantirComposer(ctx context.Context, w io.Writer, shimDir, phpBin string) 
 
 	// Se já temos um, nem consultamos a rede: o caminho comum fica instantâneo.
 	if phar, ok := c.QualquerInstalado(); ok {
-		return phar, runner.EnsureComposerShim(shimDir, phpBin, phar)
+		return phar, runner.EnsureComposerShim(shimDir, phar)
 	}
 
 	fmt.Fprintln(w, "baixando o composer.phar oficial (uma vez só)...")
@@ -37,5 +37,5 @@ func garantirComposer(ctx context.Context, w io.Writer, shimDir, phpBin string) 
 	}
 
 	fmt.Fprintf(w, "\rcomposer em %s\n", phar)
-	return phar, runner.EnsureComposerShim(shimDir, phpBin, phar)
+	return phar, runner.EnsureComposerShim(shimDir, phar)
 }

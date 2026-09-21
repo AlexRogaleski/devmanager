@@ -43,7 +43,7 @@ func ideCmd(w io.Writer, args []string) error {
 
 	// Garante que o shim existe ANTES de gravar o caminho no settings.json:
 	// apontar o editor para um link inexistente seria pior que não configurar.
-	if _, err := runner.EnsureShim(shim, rt); err != nil {
+	if _, err := runner.EnsureShim(shim, p.PHPIni(), rt); err != nil {
 		return err
 	}
 

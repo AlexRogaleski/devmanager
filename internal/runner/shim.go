@@ -6,26 +6,9 @@ import (
 	"path/filepath"
 
 	"github.com/AlexRogaleski/devmanager/internal/runtimes"
+	"github.com/AlexRogaleski/devmanager/internal/shell"
 )
 
-// EnsureShim cria (ou atualiza) o diretório de shim de um projeto e devolve
-// o caminho dele.
-//
-// O shim é um diretório contendo um link chamado "php" que aponta para o
-// runtime escolhido. Ele existe por dois motivos, e os dois importam:
-//
-//  1. Subprocessos. O comando que rodamos vai criar outros processos: o
-//     composer chama "php", o artisan chama "php" em comandos que rodam em
-//     background, scripts npm chamam "php". Colocando o shim na frente do
-//     PATH, TODA a árvore de processos usa a versão certa — não só o primeiro.
-//
-//  2. Editores. O Intelephense e o PHP Debug do VS Code precisam de um caminho
-//     fixo para o interpretador, gravado no .vscode/settings.json. Esse
-//     caminho tem que continuar válido com o devm parado, o que descarta um
-//     diretório temporário.
-//
-// A função é idempotente: chamar várias vezes com o mesmo runtime não muda
-// nada, e chamar com um runtime diferente reaponta o link.
 // comandosGerenciados lista o que o shim pode criar para cada linguagem.
 //
 // Existe para saber o que REMOVER. Um shim que só acrescenta links mantém
@@ -41,7 +24,31 @@ var comandosGerenciados = map[string][]string{
 	"node": {"node", "npm", "npx"},
 }
 
-func EnsureShim(shimDir string, runtimesDoProjeto ...runtimes.Runtime) (string, error) {
+// EnsureShim cria (ou atualiza) o diretório de shim de um projeto e devolve
+// o caminho dele.
+//
+// O shim é um diretório com o "php" do projeto e os comandos do Node. Ele
+// existe por dois motivos, e os dois importam:
+//
+//  1. Subprocessos. O comando que rodamos vai criar outros processos: o
+//     composer chama "php", o artisan chama "php" em comandos que rodam em
+//     background, scripts npm chamam "php". Colocando o shim na frente do
+//     PATH, TODA a árvore de processos usa a versão certa — não só o primeiro.
+//
+//  2. Editores. O Intelephense e o PHP Debug do VS Code precisam de um caminho
+//     fixo para o interpretador, gravado no .vscode/settings.json. Esse
+//     caminho tem que continuar válido com o devm parado, o que descarta um
+//     diretório temporário.
+//
+// O Node entra como link; o PHP, como script, porque é por ele que o php.ini
+// do projeto é apontado. Ver escreverShimDoPHP.
+//
+// A função é idempotente: chamar várias vezes com o mesmo runtime não muda
+// nada, e chamar com um runtime diferente reaponta o shim.
+//
+// phpIni são os ajustes do projeto, sobrepostos aos padrões do Dev Manager.
+// Nil usa só os padrões.
+func EnsureShim(shimDir string, phpIni map[string]string, runtimesDoProjeto ...runtimes.Runtime) (string, error) {
 	// MkdirAll não reclama se o diretório já existe — é o mkdir -p.
 	// O modo 0o755 dá leitura e execução a todos, escrita só ao dono.
 	if err := os.MkdirAll(shimDir, 0o755); err != nil {
@@ -53,6 +60,18 @@ func EnsureShim(shimDir string, runtimesDoProjeto ...runtimes.Runtime) (string, 
 	for _, rt := range runtimesDoProjeto {
 		presentes[rt.Language] = true
 		for nome, alvo := range rt.Executaveis() {
+			// O php é o único que vira script: é por ele que o php.ini
+			// entra, e um link não carrega configuração junto.
+			if nome == "php" {
+				ini, err := escreverPHPIni(shimDir, phpIni)
+				if err != nil {
+					return "", err
+				}
+				if err := escreverShimDoPHP(shimDir, alvo, ini); err != nil {
+					return "", err
+				}
+				continue
+			}
 			if err := ligar(shimDir, nome, alvo); err != nil {
 				return "", err
 			}
@@ -67,6 +86,9 @@ func EnsureShim(shimDir string, runtimesDoProjeto ...runtimes.Runtime) (string, 
 		for _, nome := range comandos {
 			_ = os.Remove(filepath.Join(shimDir, nome))
 		}
+	}
+	if !presentes["php"] {
+		_ = os.Remove(filepath.Join(shimDir, NomeDoPHPIni))
 	}
 
 	return shimDir, nil
@@ -104,20 +126,26 @@ func PHPPath(shimDir string) string {
 // O wrapper é um script de shell que executa o phar com o PHP do projeto:
 //
 //	#!/bin/sh
-//	exec "<php do projeto>" "<composer.phar>" "$@"
+//	exec "<shim>/php" "<composer.phar>" "$@"
 //
 // Com ele no PATH, qualquer coisa que chame "composer" — um script do
 // package.json, um comando do artisan, o próprio dev no terminal — usa o par
 // correto de PHP e composer, sem saber que existe um Dev Manager no meio.
 //
+// Chama o PHP DO SHIM, e não o binário direto: é o shim que aponta o php.ini.
+// Pelo binário, um composer executado de fora do devm — uma tarefa do VS
+// Code, por exemplo — rodaria com 128M de memória, e o PHPStan que ele chama
+// morreria sem explicação.
+//
 // O exec substitui o processo do shell em vez de criar um filho, então sinais
 // e código de saída chegam direto ao composer, sem intermediário.
-func EnsureComposerShim(shimDir, phpBin, phar string) error {
+func EnsureComposerShim(shimDir, phar string) error {
 	if err := os.MkdirAll(shimDir, 0o755); err != nil {
 		return fmt.Errorf("criando shim em %s: %w", shimDir, err)
 	}
 
-	conteudo := fmt.Sprintf("#!/bin/sh\nexec %q %q \"$@\"\n", phpBin, phar)
+	conteudo := fmt.Sprintf("#!/bin/sh\nexec %s %s \"$@\"\n",
+		shell.Aspas(PHPPath(shimDir)), shell.Aspas(phar))
 	destino := filepath.Join(shimDir, "composer")
 
 	// Se já está exatamente assim, não reescreve: evita mexer no mtime a cada

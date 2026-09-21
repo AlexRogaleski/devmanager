@@ -130,7 +130,7 @@ func NovoRunner(p *project.Project, rt runtimes.Runtime) (*runner.Runner, error)
 		return nil, err
 	}
 
-	r := &runner.Runner{Runtime: rt, Dir: p.Path, ShimDir: shim}
+	r := &runner.Runner{Runtime: rt, Dir: p.Path, ShimDir: shim, PHPIni: p.PHPIni()}
 	if node, ok := ResolverNode(context.Background(), p); ok {
 		r.Extras = append(r.Extras, node)
 	}

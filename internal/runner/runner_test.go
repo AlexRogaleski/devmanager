@@ -35,20 +35,28 @@ func phpFalso(t *testing.T) runtimes.Runtime {
 	}
 }
 
-func TestEnsureShimCriaLink(t *testing.T) {
+func TestEnsureShimCriaOPHP(t *testing.T) {
 	rt := phpFalso(t)
 	shimDir := filepath.Join(t.TempDir(), "shim")
 
-	if _, err := EnsureShim(shimDir, rt); err != nil {
+	if _, err := EnsureShim(shimDir, nil, rt); err != nil {
 		t.Fatalf("EnsureShim falhou: %v", err)
 	}
 
-	alvo, err := os.Readlink(PHPPath(shimDir))
+	conteudo, err := os.ReadFile(PHPPath(shimDir))
 	if err != nil {
-		t.Fatalf("link php não foi criado: %v", err)
+		t.Fatalf("php do shim não foi criado: %v", err)
 	}
-	if alvo != rt.Bin {
-		t.Errorf("link aponta para %q, esperava %q", alvo, rt.Bin)
+	if !strings.Contains(string(conteudo), rt.Bin) {
+		t.Errorf("o shim não executa o binário do projeto:\n%s", conteudo)
+	}
+
+	info, err := os.Stat(PHPPath(shimDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Errorf("php do shim sem permissão de execução: %v", info.Mode())
 	}
 }
 
@@ -58,21 +66,21 @@ func TestEnsureShimEhIdempotenteEReaponta(t *testing.T) {
 	rt := phpFalso(t)
 	shimDir := filepath.Join(t.TempDir(), "shim")
 
-	if _, err := EnsureShim(shimDir, rt); err != nil {
+	if _, err := EnsureShim(shimDir, nil, rt); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnsureShim(shimDir, rt); err != nil {
+	if _, err := EnsureShim(shimDir, nil, rt); err != nil {
 		t.Fatalf("segunda chamada falhou: %v", err)
 	}
 
 	outro := phpFalso(t)
-	if _, err := EnsureShim(shimDir, outro); err != nil {
+	if _, err := EnsureShim(shimDir, nil, outro); err != nil {
 		t.Fatalf("reapontar falhou: %v", err)
 	}
 
-	alvo, _ := os.Readlink(PHPPath(shimDir))
-	if alvo != outro.Bin {
-		t.Errorf("link não foi reapontado: %q", alvo)
+	conteudo, _ := os.ReadFile(PHPPath(shimDir))
+	if !strings.Contains(string(conteudo), outro.Bin) {
+		t.Errorf("o shim não foi reapontado:\n%s", conteudo)
 	}
 }
 
@@ -263,7 +271,7 @@ func TestDeteccaoDeScriptPHP(t *testing.T) {
 func TestEnsureComposerShim(t *testing.T) {
 	shimDir := filepath.Join(t.TempDir(), "shim")
 
-	if err := EnsureComposerShim(shimDir, "/x/php", "/y/composer.phar"); err != nil {
+	if err := EnsureComposerShim(shimDir, "/y/composer.phar"); err != nil {
 		t.Fatalf("EnsureComposerShim falhou: %v", err)
 	}
 
@@ -272,7 +280,9 @@ func TestEnsureComposerShim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(dados), "/x/php") || !strings.Contains(string(dados), "/y/composer.phar") {
+	// Chama o PHP DO SHIM, não um binário direto: é o shim que carrega o
+	// php.ini do projeto.
+	if !strings.Contains(string(dados), PHPPath(shimDir)) || !strings.Contains(string(dados), "/y/composer.phar") {
 		t.Errorf("wrapper não referencia o par correto:\n%s", dados)
 	}
 	if !strings.HasPrefix(string(dados), "#!/bin/sh") {
@@ -285,7 +295,7 @@ func TestEnsureComposerShim(t *testing.T) {
 	}
 
 	// Idempotente: chamar de novo não deve falhar nem alterar o conteúdo.
-	if err := EnsureComposerShim(shimDir, "/x/php", "/y/composer.phar"); err != nil {
+	if err := EnsureComposerShim(shimDir, "/y/composer.phar"); err != nil {
 		t.Fatalf("segunda chamada falhou: %v", err)
 	}
 }
@@ -304,7 +314,7 @@ func TestShimRemoveLinksObsoletos(t *testing.T) {
 		Comandos: map[string]string{"node": rt.Bin, "npm": rt.Bin, "npx": rt.Bin},
 	}
 
-	if _, err := EnsureShim(shimDir, rt, node); err != nil {
+	if _, err := EnsureShim(shimDir, nil, rt, node); err != nil {
 		t.Fatal(err)
 	}
 	for _, n := range []string{"php", "node", "npm", "npx"} {
@@ -314,7 +324,7 @@ func TestShimRemoveLinksObsoletos(t *testing.T) {
 	}
 
 	// Agora sem o Node: os três links dele têm que sumir.
-	if _, err := EnsureShim(shimDir, rt); err != nil {
+	if _, err := EnsureShim(shimDir, nil, rt); err != nil {
 		t.Fatal(err)
 	}
 	for _, n := range []string{"node", "npm", "npx"} {
@@ -332,14 +342,14 @@ func TestShimNaoRemoveOComposer(t *testing.T) {
 	rt := phpFalso(t)
 	shimDir := filepath.Join(t.TempDir(), "shim")
 
-	if _, err := EnsureShim(shimDir, rt); err != nil {
+	if _, err := EnsureShim(shimDir, nil, rt); err != nil {
 		t.Fatal(err)
 	}
-	if err := EnsureComposerShim(shimDir, rt.Bin, "/x/composer.phar"); err != nil {
+	if err := EnsureComposerShim(shimDir, "/x/composer.phar"); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := EnsureShim(shimDir, rt); err != nil {
+	if _, err := EnsureShim(shimDir, nil, rt); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(shimDir, "composer")); err != nil {

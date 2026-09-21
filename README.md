@@ -209,6 +209,34 @@ O build padrão é o `bulk`: 31 MB, com drivers de MySQL, PostgreSQL e SQLite,
 mais `intl`, `readline`, `opcache`, `sodium` e `imagick`.
 `DEVMANAGER_PHP_VARIANT` troca o conjunto.
 
+### Configuração do PHP
+
+O PHP estático não carrega `php.ini` nenhum, e os padrões compilados são
+apertados demais para desenvolver: 128M de memória e 2M de upload. O PHPStan
+morre no meio da análise, e o primeiro teste de upload falha por um motivo
+que não parece ter relação.
+
+O Dev Manager gera um `php.ini` junto ao shim de cada projeto, com o que a
+imagem do Laravel Sail já entregava:
+
+| | Sail | PHP estático sem ini | Dev Manager |
+|---|---|---|---|
+| `memory_limit` | `-1` | `128M` | `-1` |
+| `upload_max_filesize` | `100M` | `2M` | `100M` |
+| `post_max_size` | `100M` | `8M` | `100M` |
+
+Para mudar num projeto, declare no `devmanager.yaml`:
+
+```yaml
+php_ini:
+  memory_limit: 512M
+  max_execution_time: 120
+```
+
+Vale para tudo: o terminal, o editor e qualquer processo filho. O `php` do
+shim é um script que aponta o `PHPRC` antes de executar o interpretador, e um
+`PHPRC` já definido é respeitado.
+
 O `devm php remove` apaga apenas as versões baixadas pelo Dev Manager, e
 recusa quando algum projeto registrado ficaria sem nenhuma versão que atenda
 sua exigência:

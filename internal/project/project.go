@@ -118,6 +118,17 @@ func (p *Project) PHPPinned() bool {
 
 // IsLaravel informa se o projeto é Laravel.
 //
+// PHPIni devolve os ajustes de php.ini declarados no devmanager.yaml.
+//
+// Nil quando não há nada declarado — e nil é o caso normal: os padrões do
+// Dev Manager servem à grande maioria dos projetos.
+func (p *Project) PHPIni() map[string]string {
+	if p == nil || p.Config == nil {
+		return nil
+	}
+	return p.Config.PHPIni
+}
+
 // Métodos com receiver de ponteiro (p *Project) evitam copiar o struct a cada
 // chamada e permitem que o método altere o valor. Por consistência, quando um
 // tipo tem qualquer método de ponteiro, todos costumam ser de ponteiro.
