@@ -172,6 +172,25 @@ devm run npm run build
 Sempre com o PHP do projeto, mesmo de dentro de uma subpasta. O `composer`
 usado é o phar oficial, baixado e verificado por checksum.
 
+Para uma sessão inteira de trabalho, `devm shell` abre um shell com o
+ambiente do projeto — e aí `php`, `composer`, `node` e `npm` funcionam sem
+prefixo nenhum:
+
+```sh
+devm shell
+```
+
+Ele abre o shell que você está **usando**, e não o de login: numa máquina
+cujo login é bash mas cujo terminal abre zsh, o `$SHELL` diria bash o tempo
+todo. Use `--shell` para escolher outro.
+
+O histórico é por projeto: a seta para cima traz o que você digitou ali, e
+não o comando de outro projeto com um caminho que aqui não existe. Ele fica
+em `~/.local/share/devmanager/historicos/`, fora da pasta do projeto —
+histórico de terminal é do desenvolvedor, não do repositório. Sair com `exit`
+devolve o terminal como estava, e nada é acrescentado ao seu `.bashrc` ou
+`.zshrc`.
+
 ### Serviços
 
 ```sh

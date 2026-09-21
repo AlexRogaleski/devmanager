@@ -53,6 +53,23 @@ func RuntimesDir() (string, error) {
 	return filepath.Join(data, "runtimes"), nil
 }
 
+// HistoricoDir é onde ficam os históricos de shell de um projeto.
+//
+// Fora do projeto, e não num arquivo dentro dele: histórico de terminal é do
+// desenvolvedor, não do código. Guardá-lo na pasta do projeto o colocaria no
+// caminho do git — e o que uma pessoa digita no terminal dela não pertence ao
+// repositório de ninguém.
+//
+// A chave é a mesma do shim, derivada do caminho absoluto: dois projetos com
+// o mesmo nome em lugares diferentes têm históricos separados.
+func HistoricoDir(projectPath string) (string, error) {
+	data, err := DataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(data, "historicos", chaveDoProjeto(projectPath)), nil
+}
+
 // ShimDir é o diretório de shims de um projeto.
 //
 // O caminho precisa ser ESTÁVEL e PREVISÍVEL, porque ele vai parar dentro do

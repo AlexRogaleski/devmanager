@@ -79,6 +79,8 @@ func Run(args []string, stdio IO) error {
 		return setupCmd(stdio, resto)
 	case "run":
 		return runCmd(stdio, resto)
+	case "shell":
+		return shellCmd(stdio, resto)
 	case "artisan":
 		return artisanCmd(stdio, resto)
 	case "composer":
@@ -126,6 +128,7 @@ Execução (usa o PHP exigido pelo projeto da pasta atual):
   artisan    roda php artisan
   composer   roda o composer
   run        roda qualquer comando com o PHP do projeto no PATH
+  shell      abre um shell com o ambiente do projeto e histórico próprio
 
 Serviços:
   service catalog  lista os serviços que podem ser criados
