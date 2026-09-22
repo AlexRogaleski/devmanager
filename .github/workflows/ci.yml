@@ -124,11 +124,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
-        with:
-          # O checkout padrão é raso e não traz o objeto da tag. Sem ele,
-          # `git tag -l --format=...` devolve vazio e a Release perderia
-          # justamente a parte que diz o que mudou.
-          fetch-depth: 0
 
       - uses: actions/setup-go@v6
         with:
@@ -153,11 +148,15 @@ jobs:
           # isso duas vezes — uma na tag, outra na Release — seria convite a
           # divergirem, e a tag é o lugar que viaja junto com o código.
           #
-          # A mensagem vem pela API, e não do repositório clonado. A primeira
-          # versão deste passo lia `git tag -l --format=...` com fetch-depth: 0,
-          # o que funciona em qualquer clone local e devolveu VAZIO no runner
-          # — a v0.5.0 saiu sem as notas por causa disso. A API responde a
-          # mesma coisa em qualquer lugar.
+          # A mensagem vem pela API, e não do repositório clonado, por um
+          # motivo concreto: o actions/checkout traz a tag anotada e logo
+          # depois a SOBRESCREVE, com
+          #
+          #   git fetch --no-tags origin +<sha do commit>:refs/tags/v0.5.0
+          #
+          # O que sobra no runner é uma tag leve apontando para o commit, sem
+          # mensagem nenhuma — foi assim que a v0.5.0 saiu sem notas. Nenhum
+          # fetch-depth conserta isso, porque a sobrescrita vem depois.
           #
           # Duas armadilhas de quem escreve a mensagem:
           #
