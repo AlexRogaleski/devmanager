@@ -132,6 +132,10 @@ func Plano(p *project.Project, ex Executor, opts Opcoes) []Passo {
 	specs, _ := SpecsDoProjeto(p)
 	for _, spec := range specs {
 		passos = append(passos, passoServico(p, opts, spec))
+
+		if passo, ok := passoBancoDeTestes(p, opts, spec); ok {
+			passos = append(passos, passo)
+		}
 	}
 
 	if !opts.SemNode {
@@ -147,6 +151,9 @@ func Plano(p *project.Project, ex Executor, opts Opcoes) []Passo {
 			if passo, ok := passoSQLite(p); ok {
 				passos = append(passos, passo)
 			}
+		}
+		if passo, ok := passoStorageLink(p, ex); ok {
+			passos = append(passos, passo)
 		}
 		if opts.Migrate {
 			passos = append(passos, passoMigrate(p, ex))
@@ -226,6 +233,28 @@ func passoAppKey(p *project.Project, ex Executor) Passo {
 		Pendente: precisaDeAppKey(p.Path),
 		executar: comando(ex, "php", filepath.Join(p.Path, "artisan"), "key:generate"),
 	}
+}
+
+// passoStorageLink cria o link público de uploads.
+//
+// Um projeto que guarda arquivos em storage/app/public depende dele para
+// servi-los, e o link não vai para o git — é o clássico "funciona na máquina
+// dele". O `artisan storage:link` é idempotente, mas o passo só aparece
+// quando falta algo, para não poluir o plano de quem já está pronto.
+func passoStorageLink(p *project.Project, ex Executor) (Passo, bool) {
+	if !existe(filepath.Join(p.Path, "storage", "app", "public")) {
+		return Passo{}, false // o projeto não usa o disco público
+	}
+	if existe(filepath.Join(p.Path, "public", "storage")) {
+		return Passo{}, false
+	}
+
+	return Passo{
+		Nome:     "php artisan storage:link",
+		Porque:   "publica os arquivos de storage/app/public",
+		Pendente: true,
+		executar: comando(ex, "php", p.ArtisanPath(), "storage:link"),
+	}, true
 }
 
 func passoMigrate(p *project.Project, ex Executor) Passo {

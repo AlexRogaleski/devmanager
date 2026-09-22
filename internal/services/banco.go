@@ -130,6 +130,62 @@ func (m *Manager) CriarBanco(ctx context.Context, spec Spec, nome string) error 
 	return ultimo
 }
 
+// BancoExiste informa se o banco já está lá.
+//
+// Serve para decidir se um passo do plano ainda tem trabalho a fazer. Erro
+// devolve false: se não deu para perguntar — serviço parado, engine fora do
+// ar — o certo é considerar pendente e deixar a criação, que é idempotente,
+// resolver depois.
+func (m *Manager) BancoExiste(ctx context.Context, spec Spec, nome string) bool {
+	if spec.Banco == BancoNenhum || !nomeDeBancoValido.MatchString(nome) {
+		return false
+	}
+
+	switch spec.Banco {
+	case BancoPostgres:
+		existe, err := m.bancoPostgresExiste(ctx, spec, nome)
+		return err == nil && existe
+	case BancoMySQL, BancoMariaDB:
+		cliente := "mysql"
+		if spec.Banco == BancoMariaDB {
+			cliente = "mariadb"
+		}
+		existe, err := m.bancoMySQLExiste(ctx, spec, nome, cliente)
+		return err == nil && existe
+	}
+	return false
+}
+
+func (m *Manager) bancoPostgresExiste(ctx context.Context, spec Spec, nome string) (bool, error) {
+	usuario := spec.Env["POSTGRES_USER"]
+	if usuario == "" {
+		usuario = "postgres"
+	}
+
+	saida, err := m.execCapturando(ctx, spec.Container(),
+		"psql", "-U", usuario, "-d", "postgres", "-tAc",
+		fmt.Sprintf("SELECT 1 FROM pg_database WHERE datname = '%s'", nome))
+	if err != nil {
+		return false, fmt.Errorf("consultando bancos em %s: %w", spec.Nome, err)
+	}
+	return strings.TrimSpace(saida) == "1", nil
+}
+
+func (m *Manager) bancoMySQLExiste(ctx context.Context, spec Spec, nome, cliente string) (bool, error) {
+	senhaRoot := spec.Env["MYSQL_ROOT_PASSWORD"]
+	if senhaRoot == "" {
+		senhaRoot = spec.Env["MARIADB_ROOT_PASSWORD"]
+	}
+
+	saida, err := m.execCapturando(ctx, spec.Container(),
+		cliente, "-uroot", "-p"+senhaRoot, "-N", "-B", "-e",
+		fmt.Sprintf("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = '%s'", nome))
+	if err != nil {
+		return false, fmt.Errorf("consultando bancos em %s: %w", spec.Nome, err)
+	}
+	return strings.TrimSpace(saida) == nome, nil
+}
+
 func (m *Manager) criarBancoPostgres(ctx context.Context, spec Spec, nome string) error {
 	usuario := spec.Env["POSTGRES_USER"]
 	if usuario == "" {
@@ -138,13 +194,11 @@ func (m *Manager) criarBancoPostgres(ctx context.Context, spec Spec, nome string
 
 	// O PostgreSQL não tem CREATE DATABASE IF NOT EXISTS, então consultamos
 	// antes. É por isso que este dialeto precisa de dois passos e o MySQL não.
-	saida, err := m.execCapturando(ctx, spec.Container(),
-		"psql", "-U", usuario, "-d", "postgres", "-tAc",
-		fmt.Sprintf("SELECT 1 FROM pg_database WHERE datname = '%s'", nome))
+	existe, err := m.bancoPostgresExiste(ctx, spec, nome)
 	if err != nil {
-		return fmt.Errorf("consultando bancos em %s: %w", spec.Nome, err)
+		return err
 	}
-	if strings.TrimSpace(saida) == "1" {
+	if existe {
 		return nil
 	}
 

@@ -92,6 +92,44 @@ func passoServico(p *project.Project, opts Opcoes, spec services.Spec) Passo {
 	return passo
 }
 
+// passoBancoDeTestes cria o banco que a suíte do projeto espera.
+//
+// Fica separado do passo do serviço porque tem pendência própria: o banco da
+// aplicação pode estar criado e o de testes não — foi o que aconteceu numa
+// migração de versão de PostgreSQL aqui, e `artisan test` passou a falhar na
+// conexão sem que nada no `devm up` indicasse o motivo.
+//
+// Nada é escrito no .env: quem aponta a suíte para este banco é o
+// phpunit.xml, que já existia antes de nós.
+func passoBancoDeTestes(p *project.Project, opts Opcoes, spec services.Spec) (Passo, bool) {
+	if spec.Banco == services.BancoNenhum {
+		return Passo{}, false
+	}
+
+	nome := BancoDeTestes(p.Path, services.NomeDeBanco(p.Name))
+	if nome == "" {
+		return Passo{}, false
+	}
+
+	passo := Passo{
+		Nome:     fmt.Sprintf("banco de testes %q", nome),
+		Porque:   "a suíte do projeto espera este banco",
+		Pendente: true,
+	}
+
+	if opts.Servicos == nil {
+		passo.Bloqueado = "precisa de docker ou podman"
+		return passo, true
+	}
+
+	m := opts.Servicos
+	passo.Pendente = !m.BancoExiste(context.Background(), spec, nome)
+	passo.executar = func(ctx context.Context) error {
+		return m.CriarBanco(ctx, spec, nome)
+	}
+	return passo, true
+}
+
 // envParaServico traduz um serviço nas variáveis que o Laravel espera.
 //
 // Este mapeamento é conhecimento sobre LARAVEL, por isso vive aqui e não no
