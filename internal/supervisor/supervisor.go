@@ -85,15 +85,27 @@ type resultado struct {
 	err  error
 }
 
+// reiniciosSeguidos e janelaDeReinicio são o freio do ciclo de reinício.
+//
+// Um `queue:work --stop-when-empty` com a fila vazia sai instantaneamente,
+// sempre. Sem freio, o supervisor o religaria num laço apertado, queimando
+// CPU e enchendo o log — pior que parar e dizer o que aconteceu.
+const (
+	reiniciosSeguidos = 3
+	janelaDeReinicio  = 10 * time.Second
+)
+
 // Run inicia todos os processos e bloqueia até que a execução termine.
 //
-// O ciclo de vida é: inicia todos, espera o PRIMEIRO evento relevante
-// (processo terminou, sinal recebido, contexto cancelado) e a partir dele
-// encerra o restante ordenadamente.
+// Um processo que sai LIMPO (código 0) é reiniciado; um que sai com ERRO
+// encerra o ambiente inteiro.
 //
-// Encerrar tudo quando um processo cai é deliberado, e é o comportamento de
-// qualquer executor de Procfile: se o servidor morreu, deixar o bundler
-// rodando só produz a ilusão de que o ambiente está de pé.
+// A distinção existe por causa dos workers de fila. `queue:work --max-time`
+// sai de propósito, para que o processo seguinte comece com a memória limpa,
+// e `queue:restart` faz o mesmo depois de um deploy: nos dois casos o
+// processo cumpriu o ciclo dele, e derrubar o servidor junto seria absurdo.
+// Já um `serve` que morre porque a porta está ocupada é falha de verdade —
+// manter o bundler rodando sozinho produziria a ilusão de ambiente de pé.
 func (s *Supervisor) Run(ctx context.Context) error {
 	if len(s.Processos) == 0 {
 		return errors.New("nenhum processo configurado")
@@ -116,11 +128,22 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	// duas linhas de processos diferentes de se misturarem no terminal.
 	var mu sync.Mutex
 
-	var (
-		iniciados  []*exec.Cmd
-		limpezas   []func()
-		escritores []*escritorComPrefixo
-	)
+	var escritores []*escritorComPrefixo
+	destinos := make(map[string]io.Writer, len(s.Processos))
+	for i, p := range s.Processos {
+		if s.SaidaDe != nil {
+			destinos[p.Nome] = s.SaidaDe(p.Nome)
+			continue
+		}
+		esc := novoEscritor(s.saida(), &mu, p.Nome, largura, i, s.Cores)
+		escritores = append(escritores, esc)
+		destinos[p.Nome] = esc
+	}
+
+	// A limpeza é por processo, e não uma lista que só cresce: um worker que
+	// recicla a cada hora seria reiniciado muitas vezes, e guardar o shim de
+	// cada encarnação até o fim do dia é vazamento.
+	limpezas := make(map[string]func(), len(s.Processos))
 	defer func() {
 		for _, limpar := range limpezas {
 			limpar()
@@ -135,75 +158,101 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	// ninguém estivesse lendo — e vazaria.
 	resultados := make(chan resultado, len(s.Processos))
 
-	for i, p := range s.Processos {
+	iniciar := func(p Processo) error {
 		args, err := DividirComando(p.Linha)
 		if err != nil {
-			return fmt.Errorf("processo %q: %w", p.Nome, err)
+			return err
 		}
 
-		var destino io.Writer
-		if s.SaidaDe != nil {
-			destino = s.SaidaDe(p.Nome)
-		} else {
-			esc := novoEscritor(s.saida(), &mu, p.Nome, largura, i, s.Cores)
-			escritores = append(escritores, esc)
-			destino = esc
+		// A encarnação anterior já morreu: o shim dela não serve a mais
+		// ninguém.
+		if limpar := limpezas[p.Nome]; limpar != nil {
+			limpar()
+			delete(limpezas, p.Nome)
 		}
 
-		cmd, limpar, err := s.montar(ctx, args, destino, prazo)
+		cmd, limpar, err := s.montar(ctx, args, destinos[p.Nome], prazo)
 		if err != nil {
-			desligar()
-			esperarTodos(resultados, len(iniciados), prazo)
-			return fmt.Errorf("processo %q: %w", p.Nome, err)
+			return err
 		}
-		limpezas = append(limpezas, limpar)
-
 		if err := cmd.Start(); err != nil {
-			desligar()
-			esperarTodos(resultados, len(iniciados), prazo)
-			return fmt.Errorf("iniciando %q: %w", p.Nome, err)
+			limpar()
+			return err
 		}
-		iniciados = append(iniciados, cmd)
-
-		fmt.Fprintf(s.saida(), "iniciado  %-*s  %s\n", largura, p.Nome, p.Linha)
+		limpezas[p.Nome] = limpar
 
 		// Uma goroutine por processo, cuja única tarefa é esperar e reportar.
 		// Wait() bloqueia, então ele precisa de uma linha de execução própria;
 		// o canal traz o resultado de volta para o laço principal.
 		nome := p.Nome
-		go func(c *exec.Cmd) {
-			resultados <- resultado{nome: nome, err: c.Wait()}
-		}(cmd)
+		go func() { resultados <- resultado{nome: nome, err: cmd.Wait()} }()
+		return nil
 	}
 
-	fmt.Fprintf(s.saida(), "\n%d processos rodando — Ctrl+C para encerrar\n\n", len(iniciados))
+	porNome := make(map[string]Processo, len(s.Processos))
+	vivos := 0
+
+	for _, p := range s.Processos {
+		porNome[p.Nome] = p
+
+		if err := iniciar(p); err != nil {
+			desligar()
+			esperarTodos(resultados, vivos, prazo)
+			return fmt.Errorf("processo %q: %w", p.Nome, err)
+		}
+		vivos++
+
+		fmt.Fprintf(s.saida(), "iniciado  %-*s  %s\n", largura, p.Nome, p.Linha)
+	}
+
+	fmt.Fprintf(s.saida(), "\n%d processos rodando — Ctrl+C para encerrar\n\n", vivos)
 
 	sinais := make(chan os.Signal, 1)
 	signal.Notify(sinais, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sinais)
 
+	historico := make(map[string][]time.Time)
+	var motivo string
+
 	// select espera em vários canais ao mesmo tempo e segue pelo primeiro que
 	// ficar pronto. É a construção que torna "espere por qualquer um destes
 	// eventos" uma linha de código em vez de uma máquina de estados.
-	var motivo string
-	select {
-	case r := <-resultados:
-		motivo = descreverSaida(r)
-		fmt.Fprintf(s.saida(), "\n%s\n", motivo)
+espera:
+	for {
+		select {
+		case r := <-resultados:
+			vivos--
 
-	case sig := <-sinais:
-		fmt.Fprintf(s.saida(), "\nrecebido %s, encerrando...\n", sig)
+			if r.err == nil && podeReiniciar(historico, r.nome) {
+				fmt.Fprintf(s.saida(), "\n%s terminou limpo — reiniciando\n", r.nome)
+				if err := iniciar(porNome[r.nome]); err != nil {
+					motivo = fmt.Sprintf("não consegui reiniciar %q: %v", r.nome, err)
+					break espera
+				}
+				vivos++
+				continue
+			}
 
-	case <-ctx.Done():
-		fmt.Fprintln(s.saida(), "\nencerrando...")
+			motivo = descreverSaida(r)
+			if r.err == nil {
+				motivo += fmt.Sprintf(" — e já havia reiniciado %d vezes em %s",
+					reiniciosSeguidos, janelaDeReinicio)
+			}
+			fmt.Fprintf(s.saida(), "\n%s\n", motivo)
+			break espera
+
+		case sig := <-sinais:
+			fmt.Fprintf(s.saida(), "\nrecebido %s, encerrando...\n", sig)
+			break espera
+
+		case <-ctx.Done():
+			fmt.Fprintln(s.saida(), "\nencerrando...")
+			break espera
+		}
 	}
 
 	desligar()
-	restantes := len(iniciados) - 1
-	if restantes < 0 {
-		restantes = 0
-	}
-	esperarTodos(resultados, restantes, prazo+time.Second)
+	esperarTodos(resultados, vivos, prazo+time.Second)
 
 	fmt.Fprintln(s.saida(), "todos os processos encerrados")
 
@@ -211,6 +260,31 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		return &ProcessoTerminouError{Descricao: motivo}
 	}
 	return nil
+}
+
+// podeReiniciar decide se vale religar o processo, e já anota a tentativa.
+//
+// A janela é deslizante: um worker que recicla de hora em hora nunca acumula
+// três marcas dentro de dez segundos, e um que sai no mesmo instante em que
+// sobe esgota a cota na terceira volta.
+func podeReiniciar(historico map[string][]time.Time, nome string) bool {
+	agora := time.Now()
+	limite := agora.Add(-janelaDeReinicio)
+
+	recentes := historico[nome][:0]
+	for _, t := range historico[nome] {
+		if t.After(limite) {
+			recentes = append(recentes, t)
+		}
+	}
+
+	if len(recentes) >= reiniciosSeguidos {
+		historico[nome] = recentes
+		return false
+	}
+
+	historico[nome] = append(recentes, agora)
+	return true
 }
 
 // montar prepara um exec.Cmd com encerramento gracioso.

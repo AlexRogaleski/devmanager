@@ -210,3 +210,96 @@ func TestSupervisorEncerraDescendentes(t *testing.T) {
 		t.Error("o neto continuou vivo depois do encerramento")
 	}
 }
+
+// Um worker de fila sai de propósito — `queue:work --max-time` recicla a
+// memória, `queue:restart` reage a um deploy. Derrubar o servidor junto, que
+// era o comportamento antigo, é desproporcional.
+func TestProcessoQueSaiLimpoEReiniciado(t *testing.T) {
+	dir := t.TempDir()
+	marcas := filepath.Join(dir, "voltas.txt")
+
+	var saida saidaSegura
+	s := supervisorDeTeste(t, &saida,
+		// Cada encarnação anota uma linha e sai com 0, como um worker que
+		// cumpriu o ciclo.
+		Processo{Nome: "queue", Linha: "sh -c 'echo volta >> " + marcas + "; sleep 0.2'"},
+		Processo{Nome: "serve", Linha: "sleep 30"},
+	)
+
+	ctx, cancelar := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancelar()
+
+	err := s.Run(ctx)
+
+	dados, errLeitura := os.ReadFile(marcas)
+	if errLeitura != nil {
+		t.Fatal(errLeitura)
+	}
+	voltas := strings.Count(string(dados), "volta")
+
+	// A primeira execução mais os reinícios permitidos pelo freio.
+	if voltas < 2 {
+		t.Errorf("o processo rodou %d vez(es): não foi reiniciado", voltas)
+	}
+	if voltas > reiniciosSeguidos+1 {
+		t.Errorf("o processo rodou %d vezes: o freio não segurou", voltas)
+	}
+
+	if !strings.Contains(saida.String(), "queue terminou limpo — reiniciando") {
+		t.Errorf("a saída não conta o reinício:\n%s", saida.String())
+	}
+
+	// O freio parou o ciclo, e a mensagem final diz por quê.
+	var terminou *ProcessoTerminouError
+	if errors.As(err, &terminou) && !strings.Contains(terminou.Descricao, "já havia reiniciado") {
+		t.Errorf("motivo pouco explicativo: %q", terminou.Descricao)
+	}
+}
+
+// Já um processo que sai com ERRO continua derrubando o ambiente: é falha de
+// verdade, e um bundler sozinho produz a ilusão de ambiente de pé.
+func TestProcessoQueFalhaDerrubaOAmbiente(t *testing.T) {
+	var saida saidaSegura
+	s := supervisorDeTeste(t, &saida,
+		Processo{Nome: "serve", Linha: "sh -c 'exit 3'"},
+		Processo{Nome: "vite", Linha: "sleep 30"},
+	)
+
+	inicio := time.Now()
+	err := s.Run(context.Background())
+
+	if time.Since(inicio) > 5*time.Second {
+		t.Error("o ambiente não caiu junto com o processo que falhou")
+	}
+
+	var terminou *ProcessoTerminouError
+	if !errors.As(err, &terminou) {
+		t.Fatalf("erro = %v, esperava ProcessoTerminouError", err)
+	}
+	if !strings.Contains(terminou.Descricao, "código 3") {
+		t.Errorf("motivo = %q, esperava o código de saída", terminou.Descricao)
+	}
+	if strings.Contains(saida.String(), "reiniciando") {
+		t.Error("processo que falhou não pode ser reiniciado")
+	}
+}
+
+// O freio é por janela deslizante: reinícios espaçados não se acumulam.
+func TestFreioContaSoOQueEstaNaJanela(t *testing.T) {
+	historico := map[string][]time.Time{}
+
+	for i := range reiniciosSeguidos {
+		if !podeReiniciar(historico, "queue") {
+			t.Fatalf("negou o reinício %d, dentro da cota", i+1)
+		}
+	}
+	if podeReiniciar(historico, "queue") {
+		t.Error("permitiu além da cota dentro da janela")
+	}
+
+	// Marcas antigas saem da conta.
+	historico["queue"] = []time.Time{time.Now().Add(-2 * janelaDeReinicio)}
+	if !podeReiniciar(historico, "queue") {
+		t.Error("negou o reinício por causa de marcas fora da janela")
+	}
+}

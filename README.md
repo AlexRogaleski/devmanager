@@ -193,6 +193,15 @@ Os processos recebem as portas no ambiente — `DEVM_PORT` para a principal e
 `DEVM_PORT_VITE` para `{{port:vite}}` —, que é como o `vite.config.js`
 descobre onde o backend subiu sem ninguém escrever número nenhum.
 
+Um processo que termina **com sucesso** é reiniciado; um que termina **com
+erro** derruba o ambiente. É essa diferença que faz um worker de fila
+funcionar aqui: `queue:work --max-time=3600` sai de propósito para reciclar a
+memória, e `queue:restart` faz o mesmo depois de um deploy — nos dois casos o
+processo cumpriu o ciclo. Já um `serve` que morre com a porta ocupada é falha
+de verdade, e manter o bundler rodando sozinho só fingiria que o ambiente
+está de pé. Três saídas limpas em dez segundos param o ciclo, para que um
+`--stop-when-empty` com a fila vazia não vire laço apertado.
+
 ```sh
 devm add .           # registra o projeto
 devm scan ~/Projetos # registra todos os projetos de um diretório
