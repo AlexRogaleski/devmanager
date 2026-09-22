@@ -146,19 +146,20 @@ jobs:
       # última linha: um binário compilado e não testado — hoje, os de Linux
       # ARM64 e macOS Intel — precisa dizer isso a quem baixa.
       - name: Notas da versão
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           # O que a versão MUDOU vem da mensagem da tag anotada. Escrever
           # isso duas vezes — uma na tag, outra na Release — seria convite a
           # divergirem, e a tag é o lugar que viaja junto com o código.
           #
-          # Só tag ANOTADA vale. Numa tag leve, %(contents) cai na mensagem
-          # do commit apontado — que descreve uma mudança, não a versão, e
-          # publicaria "fix: typo" como nota de release. Sem mensagem
-          # própria, as notas ficam só com as instruções, como eram até
-          # aqui.
+          # A mensagem vem pela API, e não do repositório clonado. A primeira
+          # versão deste passo lia `git tag -l --format=...` com fetch-depth: 0,
+          # o que funciona em qualquer clone local e devolveu VAZIO no runner
+          # — a v0.5.0 saiu sem as notas por causa disso. A API responde a
+          # mesma coisa em qualquer lugar.
           #
-          # O texto é renderizado como MARKDOWN, e duas coisas se perdem no
-          # caminho entre o terminal e a página:
+          # Duas armadilhas de quem escreve a mensagem:
           #
           #   git tag -a vX.Y.Z --cleanup=verbatim -F notas.md
           #
@@ -167,22 +168,25 @@ jobs:
           # <NOME> solto vira HTML inválido e desaparece da página: escreva
           # entre crases.
           : > dist/NOTAS.md
+
+          SHA=$(gh api "repos/${{ github.repository }}/git/ref/tags/${{ github.ref_name }}" \
+                  --jq 'select(.object.type == "tag") | .object.sha' 2>/dev/null || true)
+
           CORPO=
-          if [ "$(git cat-file -t "${{ github.ref_name }}" 2>/dev/null)" = "tag" ]; then
-            CORPO=$(git tag -l --format='%(contents:body)' "${{ github.ref_name }}")
-          fi
-          if [ -n "$CORPO" ]; then
-            printf '%s\n\n---\n\n' "$CORPO" >> dist/NOTAS.md
+          if [ -n "$SHA" ]; then
+            # tail tira o assunto (a primeira linha, o próprio número da
+            # versão); o sed come as linhas em branco que sobram na frente.
+            CORPO=$(gh api "repos/${{ github.repository }}/git/tags/$SHA" --jq .message \
+                      | tail -n +2 | sed '/./,$!d')
           fi
 
-          # O heredoc é CITADO ('FIM'), então o shell não interpreta nada do
-          # que vem dentro. Isso não é preciosismo: o corpo é markdown, e
-          # markdown usa backtick, que sem as aspas o shell leria como
-          # substituição de comando — a tabela de arquivos saiu vazia
-          # exatamente assim, numa versão anterior deste passo.
-          #
-          # A URL aparece duas vezes por isso. O ${{ github.ref_name }} não
-          # precisa do shell: o Actions o substitui antes de o script rodar.
+          if [ -n "$CORPO" ]; then
+            printf '%s\n\n---\n\n' "$CORPO" >> dist/NOTAS.md
+          else
+            echo "aviso: ${{ github.ref_name }} não é tag anotada ou está sem corpo;"
+            echo "       a Release sai só com as instruções de instalação."
+          fi
+
           cat >> dist/NOTAS.md <<'FIM'
           Binário estático, sem dependências de sistema. No Linux:
 
