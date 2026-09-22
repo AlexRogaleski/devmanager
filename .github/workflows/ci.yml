@@ -157,9 +157,15 @@ jobs:
           # própria, as notas ficam só com as instruções, como eram até
           # aqui.
           #
-          # O texto é renderizado como MARKDOWN. Um <NOME> solto vira HTML
-          # inválido e some da página: escreva entre crases na mensagem da
-          # tag.
+          # O texto é renderizado como MARKDOWN, e duas coisas se perdem no
+          # caminho entre o terminal e a página:
+          #
+          #   git tag -a vX.Y.Z --cleanup=verbatim -F notas.md
+          #
+          # Sem o --cleanup=verbatim, o git apaga toda linha começada por #
+          # — o que inclui os títulos markdown, que somem sem aviso. E um
+          # <NOME> solto vira HTML inválido e desaparece da página: escreva
+          # entre crases.
           : > dist/NOTAS.md
           CORPO=
           if [ "$(git cat-file -t "${{ github.ref_name }}" 2>/dev/null)" = "tag" ]; then
