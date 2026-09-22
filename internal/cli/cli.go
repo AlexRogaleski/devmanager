@@ -98,6 +98,8 @@ func Run(args []string, stdio IO) error {
 	case "agents":
 		return agentsCmd(stdio, resto)
 
+	case "upgrade":
+		return upgradeCmd(stdio, resto)
 	case "version":
 		return versionCmd(stdio.Out, resto)
 	case "help", "-h", "--help":
@@ -183,6 +185,7 @@ Domínios locais:
   dns install      mostra como configurar a resolução
 
 Outros:
+  upgrade    troca este binário pela última versão publicada
   version    mostra a versão do Dev Manager
   help       mostra esta ajuda
 `)

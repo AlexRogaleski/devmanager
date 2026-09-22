@@ -83,6 +83,18 @@ make install-host
 É o caminho de quem vai mexer no código: o build incremental leva menos de um
 segundo, e `make install-host` já coloca o resultado em `~/.local/bin/devm`.
 
+### Atualizando
+
+```sh
+devm upgrade          # baixa e instala a última versão publicada
+devm upgrade --check  # só informa se há versão nova
+```
+
+O binário é verificado contra o `SHA256SUMS` da Release antes de substituir o
+que está instalado: checksum que não bate significa não instalar. Um binário
+compilado do código local (`v0.5.0-3-gabc1234`) não é trocado sem `--force` —
+ele costuma ser mais novo que a versão publicada.
+
 ### Configuração da máquina
 
 Três ajustes de sistema, uma vez por máquina:
@@ -219,6 +231,9 @@ devm stop minha-app
 ```
 
 `devm up` é idempotente: rodar de novo não reescreve nada que já esteja certo.
+Ele instala dependências, cria o `.env` e a chave, sobe os serviços declarados,
+cria o banco da aplicação — e também o banco que o `phpunit.xml` pedir, sem o
+qual `artisan test` falha na conexão — e o link de `storage`.
 
 A edição do `.env` é feita por linha, preservando comentários, ordem e as
 chaves desconhecidas. Na primeira alteração, o original é guardado em

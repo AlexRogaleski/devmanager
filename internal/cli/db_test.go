@@ -54,3 +54,22 @@ func TestTamanhoLegivel(t *testing.T) {
 		}
 	}
 }
+
+// O `devm upgrade` não pode trocar um binário recém-compilado pela release:
+// o carimbo do git describe é justamente o sinal de que ele é mais novo.
+func TestUpgradeReconheceBuildLocal(t *testing.T) {
+	casos := map[string]situacaoDaVersao{
+		"v0.5.0":              mesmaVersao,
+		"v0.4.0":              temVersaoNova,
+		"v0.5.0-2-gfa5f797":   versaoLocal,
+		"v0.5.0-2-g123-dirty": versaoLocal,
+		"dev":                 versaoLocal,
+		" v0.5.0 ":            mesmaVersao,
+	}
+
+	for instalada, esperado := range casos {
+		if obtido := compararVersoes(instalada, "v0.5.0"); obtido != esperado {
+			t.Errorf("%q → %v, esperava %v", instalada, obtido, esperado)
+		}
+	}
+}
