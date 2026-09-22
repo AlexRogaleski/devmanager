@@ -17,11 +17,15 @@ import (
 // serviceCmd despacha os subcomandos de `devm service`.
 func serviceCmd(stdio IO, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprint(stdio.Out, "uso: devm service <list|catalog|start|stop|logs|remove|engine> [argumentos]\n")
+		fmt.Fprint(stdio.Out, "uso: devm service <add|drop|list|catalog|start|stop|logs|remove|engine> [argumentos]\n")
 		return nil
 	}
 
 	switch args[0] {
+	case "add":
+		return serviceAddCmd(stdio.Out, args[1:])
+	case "drop":
+		return serviceDropCmd(stdio.Out, args[1:])
 	case "catalog", "cat":
 		return serviceCatalogCmd(stdio.Out)
 	case "list", "ls":

@@ -123,9 +123,33 @@ suba o banco e o crie.
 ### Configurar um projeto existente
 
 ```sh
-devm init          # cria o devmanager.yaml com todas as opções documentadas
-devm init --print  # só mostra o modelo, para quem já tem o arquivo
+devm init          # cria o devmanager.yaml a partir do que o projeto já usa
+devm init --print  # só mostra o resultado, para quem já tem o arquivo
 ```
+
+O `devm init` lê o que o projeto já tem e declara o que encontrar:
+
+- `compose.yaml` / `docker-compose.yml` — as imagens viram serviços, com a
+  versão da tag; se o projeto vinha do Laravel Sail, a versão do PHP sai do
+  runtime que o Sail constrói (`vendor/laravel/sail/runtimes/8.4`);
+- `.env` (ou `.env.example`) — `DB_CONNECTION` diz o banco, `QUEUE_CONNECTION`
+  e afins denunciam o Redis, `MAIL_PORT=1025` denuncia o Mailpit;
+- `composer.json` — a versão de PHP, quando não há pista melhor.
+
+Cada linha do resumo diz de onde veio, para conferir antes de versionar:
+
+```
+devmanager.yaml criado
+
+  php 8.4          compose.yaml (runtime do Sail)
+  mailpit          compose.yaml
+  mysql:8.0        compose.yaml
+                   ↳ a máquina já tem mysql:8.4; a mesma versão evita um segundo contêiner
+  redis:8          .env (QUEUE_CONNECTION=redis)
+```
+
+Um arquivo que já existe nunca é sobrescrito: o comando lista o que o projeto
+usa e não declara, e mostra o `devm service add` que resolve.
 
 O arquivo gerado traz cada opção explicada e exemplificada em comentário.
 Versione junto com o código:
@@ -223,6 +247,15 @@ devolve o terminal como estava, e nada é acrescentado ao seu `.bashrc` ou
 `.zshrc`.
 
 ### Serviços
+
+No projeto — mexe no `devmanager.yaml`, versionado junto com o código:
+
+```sh
+devm service add postgres:17 redis  # declara; use `devm up` para subir
+devm service drop redis             # o projeto deixa de exigir
+```
+
+Na máquina — mexe nos contêineres:
 
 ```sh
 devm service catalog              # o que dá para subir

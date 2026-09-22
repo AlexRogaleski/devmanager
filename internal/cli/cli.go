@@ -134,6 +134,8 @@ Execução (usa o PHP exigido pelo projeto da pasta atual):
   shell      abre um shell com o ambiente do projeto e histórico próprio
 
 Serviços:
+  service add      declara um serviço no projeto (devmanager.yaml)
+  service drop     tira um serviço do projeto
   service catalog  lista os serviços que podem ser criados
   service list     mostra os serviços nesta máquina
   service start    sobe um serviço (ex.: devm service start postgres:17)
