@@ -211,7 +211,7 @@ func TestEnvJaAponta(t *testing.T) {
 
 	spec, _ := services.ParseSpec("postgres:17")
 
-	if envJaAponta(p, spec) {
+	if envJaAponta(p, spec, nil) {
 		t.Error("sem .env, não deveria considerar configurado")
 	}
 
@@ -219,7 +219,7 @@ func TestEnvJaAponta(t *testing.T) {
 	if err := os.WriteFile(envPath, []byte("APP_KEY=x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if envJaAponta(p, spec) {
+	if envJaAponta(p, spec, nil) {
 		t.Error(".env sem as chaves de banco não deveria contar")
 	}
 
@@ -230,7 +230,7 @@ func TestEnvJaAponta(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if envJaAponta(p, spec) {
+	if envJaAponta(p, spec, nil) {
 		t.Error("sem DB_PORT não deveria contar como configurado")
 	}
 
@@ -242,7 +242,7 @@ func TestEnvJaAponta(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !envJaAponta(p, spec) {
+	if !envJaAponta(p, spec, nil) {
 		t.Error("com todas as chaves, deveria contar como configurado")
 	}
 }
@@ -294,7 +294,7 @@ func TestEnvJaApontaExigeAPorta(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := envJaAponta(p, spec); got != c.querOK {
+			if got := envJaAponta(p, spec, nil); got != c.querOK {
 				t.Errorf("envJaAponta = %v, esperava %v (valores: %v)", got, c.querOK, c.valores)
 			}
 		})
@@ -329,7 +329,7 @@ func TestEnvJaApontaExigeOUsuarioDoServico(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if envJaAponta(p, spec) {
+	if envJaAponta(p, spec, nil) {
 		t.Error("credenciais do instalador não podem passar como configuração nossa")
 	}
 
@@ -339,7 +339,54 @@ func TestEnvJaApontaExigeOUsuarioDoServico(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !envJaAponta(p, spec) {
+	if !envJaAponta(p, spec, nil) {
 		t.Error("com o usuário do serviço, deveria contar como configurado")
+	}
+}
+
+// O caso que apareceu ao migrar um projeto de postgres:17 para :18 — o
+// contêiner novo publica noutra porta, e o .env continuava apontando para o
+// antigo. A conferência aprovava qualquer número, então o passo se dava por
+// feito e o projeto seguia falando com o banco velho.
+func TestEnvNaoApontaQuandoAPortaEDeOutroServico(t *testing.T) {
+	p := projetoEm(t, map[string]string{
+		"composer.json":   `{"require":{"laravel/framework":"^12.0"}}`,
+		"artisan":         "#!/usr/bin/env php",
+		"devmanager.yaml": "services:\n  - postgres:18\n",
+	})
+	spec, _ := services.ParseSpec("postgres:18")
+	envPath := filepath.Join(p.Path, ".env")
+
+	base := map[string]string{
+		"DB_CONNECTION": "pgsql",
+		"DB_HOST":       "127.0.0.1",
+		"DB_DATABASE":   services.NomeDeBanco(p.Name),
+		"DB_USERNAME":   "laravel",
+		"DB_PORT":       "5432", // a porta do contêiner ANTIGO
+	}
+	if _, err := dotenv.Set(envPath, base); err != nil {
+		t.Fatal(err)
+	}
+
+	emUso := []services.Porta{{Host: 36101, Interna: 5432}}
+	if envJaAponta(p, spec, emUso) {
+		t.Error("deu por configurado um .env que aponta para a porta do serviço antigo")
+	}
+
+	// Com a porta certa, o passo não se repete à toa.
+	if _, err := dotenv.Set(envPath, map[string]string{"DB_PORT": "36101"}); err != nil {
+		t.Fatal(err)
+	}
+	if !envJaAponta(p, spec, emUso) {
+		t.Error("marcou como pendente um .env que já aponta para o serviço certo")
+	}
+
+	// Sem portas conhecidas — contêiner parado, engine ausente — vale o
+	// comportamento antigo: não reescrever o .env por palpite.
+	if _, err := dotenv.Set(envPath, map[string]string{"DB_PORT": "5432"}); err != nil {
+		t.Fatal(err)
+	}
+	if !envJaAponta(p, spec, nil) {
+		t.Error("sem portas conhecidas, o .env preenchido devia ser aceito")
 	}
 }

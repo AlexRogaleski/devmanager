@@ -91,6 +91,24 @@ func (m *Manager) List(ctx context.Context) ([]Servico, error) {
 	return servicos, nil
 }
 
+// Buscar devolve o serviço desta spec como ele está na máquina.
+//
+// Diferente de Estado, traz as PORTAS REAIS: um contêiner criado antes numa
+// porta alternativa publica onde publica, e quem precisa configurar o projeto
+// tem de saber disso — não o que o catálogo gostaria.
+func (m *Manager) Buscar(ctx context.Context, spec Spec) (Servico, bool) {
+	servicos, err := m.List(ctx)
+	if err != nil {
+		return Servico{}, false
+	}
+	for _, s := range servicos {
+		if s.Container == spec.Container() {
+			return s, true
+		}
+	}
+	return Servico{}, false
+}
+
 // Estado informa a situação de uma spec específica.
 func (m *Manager) Estado(ctx context.Context, spec Spec) (Estado, error) {
 	servicos, err := m.List(ctx)

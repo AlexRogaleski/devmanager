@@ -27,9 +27,10 @@ const prazoDeProntidao = time.Minute
 func passoServico(p *project.Project, opts Opcoes, spec services.Spec) Passo {
 	pendente := true
 	if opts.Servicos != nil {
-		if estado, err := opts.Servicos.Estado(context.Background(), spec); err == nil {
-			// Já rodando E o .env já apontando para ele: nada a fazer.
-			pendente = estado != services.EstadoRodando || !envJaAponta(p, spec)
+		// Buscar, e não Estado: precisamos das portas REAIS para saber se o
+		// .env aponta para este serviço ou para outro que já esteve aqui.
+		if s, ok := opts.Servicos.Buscar(context.Background(), spec); ok {
+			pendente = s.Estado != services.EstadoRodando || !envJaAponta(p, spec, s.Portas)
 		}
 	}
 
@@ -158,7 +159,11 @@ func envParaServico(spec services.Spec, portas []services.Porta, nomeBanco, nome
 }
 
 // envJaAponta confere se o .env do projeto já está configurado para o serviço.
-func envJaAponta(p *project.Project, spec services.Spec) bool {
+//
+// portas são as do serviço EM EXECUÇÃO. Sem elas, um projeto que trocou de
+// versão de banco ficava apontando para o contêiner antigo: a porta anterior
+// continuava escrita no .env, e a conferência aprovava qualquer número.
+func envJaAponta(p *project.Project, spec services.Spec, portas []services.Porta) bool {
 	atual, err := dotenv.Load(filepath.Join(p.Path, ".env"))
 	if err != nil {
 		return false
@@ -179,7 +184,7 @@ func envJaAponta(p *project.Project, spec services.Spec) bool {
 	case "postgres":
 		return atual["DB_CONNECTION"] == "pgsql" &&
 			atual["DB_DATABASE"] == services.NomeDeBanco(p.Name) &&
-			atual["DB_PORT"] != "" &&
+			portaBate(atual["DB_PORT"], portas, "") &&
 			atual["DB_USERNAME"] == spec.Env["POSTGRES_USER"]
 	case "mysql", "mariadb":
 		usuario := spec.Env["MYSQL_USER"]
@@ -188,18 +193,45 @@ func envJaAponta(p *project.Project, spec services.Spec) bool {
 		}
 		return atual["DB_CONNECTION"] == "mysql" &&
 			atual["DB_DATABASE"] == services.NomeDeBanco(p.Name) &&
-			atual["DB_PORT"] != "" &&
+			portaBate(atual["DB_PORT"], portas, "") &&
 			atual["DB_USERNAME"] == usuario
 	case "redis":
 		return atual["REDIS_HOST"] == "127.0.0.1" &&
 			atual["REDIS_PREFIX"] != "" &&
-			atual["REDIS_PORT"] != ""
+			portaBate(atual["REDIS_PORT"], portas, "")
 	case "mailpit":
 		return atual["MAIL_HOST"] == "127.0.0.1" &&
 			atual["MAIL_MAILER"] == "smtp" &&
-			atual["MAIL_PORT"] != ""
+			portaBate(atual["MAIL_PORT"], portas, "smtp")
 	}
 	return false
+}
+
+// portaBate compara a porta escrita no .env com a do serviço em execução.
+//
+// Sem as portas reais em mãos — contêiner parado, engine indisponível —
+// aceitamos qualquer valor preenchido. É o comportamento antigo, e continua
+// certo como último recurso: melhor não mexer que reescrever o .env com um
+// palpite.
+func portaBate(valor string, portas []services.Porta, rotulo string) bool {
+	if valor == "" {
+		return false
+	}
+
+	esperada := 0
+	for _, p := range portas {
+		if p.Rotulo == rotulo {
+			esperada = p.Host
+			break
+		}
+	}
+	if esperada == 0 && rotulo == "" && len(portas) > 0 {
+		esperada = portas[0].Host
+	}
+	if esperada == 0 {
+		return true
+	}
+	return valor == itoa(esperada)
 }
 
 func itoa(n int) string {

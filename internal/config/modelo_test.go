@@ -138,3 +138,48 @@ func TestSetPHPNovoTrazAsOpcoesComentadas(t *testing.T) {
 		}
 	}
 }
+
+// O arquivo é do desenvolvedor: uma edição nossa muda a linha pedida e nada
+// mais. O yaml.v3 não guarda linhas vazias, e sem reconstruí-las um
+// `devm service drop` reformatava o arquivo inteiro.
+func TestEdicaoPreservaLinhasEmBranco(t *testing.T) {
+	dir := t.TempDir()
+	original := `# Dev Manager
+php: "8.4"
+
+services:
+  - postgres:17
+  - redis
+  - mailpit
+
+php_ini:
+  memory_limit: "512M"
+`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetLista(dir, "services", []string{"postgres:17", "mailpit"}); err != nil {
+		t.Fatal(err)
+	}
+
+	dados, err := os.ReadFile(filepath.Join(dir, FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	obtido := string(dados)
+
+	esperado := `# Dev Manager
+php: "8.4"
+
+services:
+  - postgres:17
+  - mailpit
+
+php_ini:
+  memory_limit: "512M"
+`
+	if obtido != esperado {
+		t.Errorf("a edição mexeu em mais que a lista:\n--- obtido ---\n%s\n--- esperado ---\n%s", obtido, esperado)
+	}
+}

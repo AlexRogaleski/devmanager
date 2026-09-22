@@ -3,6 +3,7 @@ package services
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -208,7 +209,31 @@ func ParseSpec(texto string) (Spec, error) {
 	portas := make([]Porta, len(def.Portas))
 	copy(portas, def.Portas)
 
-	return Spec{Definicao: def, Versao: versao, Portas: portas}, nil
+	spec := Spec{Definicao: def, Versao: versao, Portas: portas}
+	spec.VolumeInterno = volumeDaVersao(nome, versao, def.VolumeInterno)
+	return spec, nil
+}
+
+// volumeDaVersao corrige o ponto de montagem quando a imagem mudou de layout
+// entre versões.
+//
+// O PostgreSQL 18 passou a guardar os dados em subdiretório por versão
+// (/var/lib/postgresql/18/docker) e a esperar o volume um nível acima. Montar
+// no caminho antigo faz o contêiner recusar-se a subir: ele encontra um
+// diretório de dados onde não deveria haver um e sai com erro, em vez de
+// arriscar corromper o que estiver lá.
+//
+// Ver docker-library/postgres#1259.
+func volumeDaVersao(nome, versao, padrao string) string {
+	if nome != "postgres" {
+		return padrao
+	}
+
+	major, _, _ := strings.Cut(versao, ".")
+	if n, err := strconv.Atoi(major); err == nil && n >= 18 {
+		return "/var/lib/postgresql"
+	}
+	return padrao
 }
 
 // versaoSegura transforma a versão num pedaço de nome válido para contêiner.

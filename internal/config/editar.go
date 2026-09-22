@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -70,7 +71,7 @@ func SetChave(dir, chave, valor string) error {
 	if err != nil {
 		return err
 	}
-	return escreverAtomico(caminho, saida)
+	return escreverAtomico(caminho, preservarEspacamento(dados, saida))
 }
 
 // SetLista grava uma chave com valores em sequência.
@@ -112,7 +113,7 @@ func SetLista(dir, chave string, valores []string) error {
 	if err := os.MkdirAll(filepath.Dir(caminho), 0o755); err != nil {
 		return fmt.Errorf("criando %s: %w", filepath.Dir(caminho), err)
 	}
-	return escreverAtomico(caminho, saida)
+	return escreverAtomico(caminho, preservarEspacamento(dados, saida))
 }
 
 // definirSequencia cria ou substitui uma chave de lista.
@@ -171,7 +172,7 @@ func removerChaveDoArquivo(dir, chave string) error {
 	if err != nil {
 		return err
 	}
-	return escreverAtomico(caminho, saida)
+	return escreverAtomico(caminho, preservarEspacamento(dados, saida))
 }
 
 // SetPHP fixa a versão de PHP do projeto, preservando o resto do arquivo.
@@ -210,7 +211,7 @@ func SetPHP(dir, versao string) error {
 	if err != nil {
 		return err
 	}
-	return escreverAtomico(caminho, saida)
+	return escreverAtomico(caminho, preservarEspacamento(dados, saida))
 }
 
 // ClearPHP remove a fixação, voltando a decisão para o composer.json.
@@ -252,7 +253,7 @@ func ClearPHP(dir string) error {
 	if err != nil {
 		return err
 	}
-	return escreverAtomico(caminho, saida)
+	return escreverAtomico(caminho, preservarEspacamento(dados, saida))
 }
 
 // mapaRaiz devolve o nó de mapeamento na raiz do documento.
@@ -309,6 +310,53 @@ func removerChave(mapa *yaml.Node, chave string) bool {
 		}
 	}
 	return false
+}
+
+// preservarEspacamento devolve o texto novo com as linhas em branco que o
+// original tinha.
+//
+// O yaml.v3 guarda comentários no Node, mas não linhas vazias: reserializar
+// um arquivo espaçado por seções devolve um bloco denso. Como toda edição
+// nossa passa por aqui, `devm service drop redis` reformatava o arquivo
+// inteiro do desenvolvedor — um diff com uma linha de conteúdo e várias de
+// ruído.
+//
+// A reconstrução é por CONTEÚDO da linha, não por posição: as chaves e os
+// comentários continuam os mesmos entre as duas versões, e o que mudou de
+// lugar simplesmente não casa e fica sem o espaço.
+func preservarEspacamento(original, novo []byte) []byte {
+	if len(original) == 0 {
+		return novo
+	}
+
+	// Linhas que, no original, vinham logo depois de uma linha em branco.
+	espacadas := make(map[string]bool)
+	anteriorVazia := false
+	for _, linha := range strings.Split(string(original), "\n") {
+		if strings.TrimSpace(linha) == "" {
+			anteriorVazia = true
+			continue
+		}
+		if anteriorVazia {
+			espacadas[linha] = true
+		}
+		anteriorVazia = false
+	}
+
+	if len(espacadas) == 0 {
+		return novo
+	}
+
+	linhas := strings.Split(string(novo), "\n")
+	saida := make([]string, 0, len(linhas)+len(espacadas))
+	for i, linha := range linhas {
+		// Nunca no começo do arquivo, e nunca duplicando uma vazia.
+		if i > 0 && espacadas[linha] && strings.TrimSpace(saida[len(saida)-1]) != "" {
+			saida = append(saida, "")
+		}
+		saida = append(saida, linha)
+	}
+	return []byte(strings.Join(saida, "\n"))
 }
 
 func serializar(doc *yaml.Node) ([]byte, error) {

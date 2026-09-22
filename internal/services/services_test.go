@@ -459,3 +459,31 @@ func TestDetectarSemEngine(t *testing.T) {
 		}
 	}
 }
+
+// O PostgreSQL 18 mudou o layout: os dados vão para um subdiretório por
+// versão, e o volume é montado um nível acima. Montar no caminho antigo faz
+// o contêiner sair com erro em vez de subir.
+func TestPostgres18MontaOVolumeUmNivelAcima(t *testing.T) {
+	casos := map[string]string{
+		"postgres:17":   "/var/lib/postgresql/data",
+		"postgres:18":   "/var/lib/postgresql",
+		"postgres:18.1": "/var/lib/postgresql",
+		"postgres:26":   "/var/lib/postgresql",
+	}
+
+	for texto, esperado := range casos {
+		spec, err := ParseSpec(texto)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if spec.VolumeInterno != esperado {
+			t.Errorf("%s montou em %q, esperava %q", texto, spec.VolumeInterno, esperado)
+		}
+	}
+
+	// A correção é do PostgreSQL: mais nada muda de lugar.
+	mysql, _ := ParseSpec("mysql:8.4")
+	if mysql.VolumeInterno != "/var/lib/mysql" {
+		t.Errorf("mysql montou em %q", mysql.VolumeInterno)
+	}
+}
