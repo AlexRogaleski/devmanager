@@ -186,12 +186,20 @@ func TestLinkSimbolicoEResolvido(t *testing.T) {
 		t.Skipf("sem suporte a symlink: %v", err)
 	}
 
-	if obtido := resolverLink(link); obtido != real {
-		t.Errorf("resolveu para %q, esperava %q", obtido, real)
+	// O esperado também passa pelo EvalSymlinks: no macOS o próprio /var é
+	// um link para /private/var, e comparar com o caminho cru faria o teste
+	// falhar lá por um motivo que não é o do teste.
+	esperado, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	// Caminho que não é link volta como veio.
-	if obtido := resolverLink(real); obtido != real {
-		t.Errorf("mexeu num caminho comum: %q", obtido)
+	if obtido := resolverLink(link); obtido != esperado {
+		t.Errorf("resolveu para %q, esperava %q", obtido, esperado)
+	}
+
+	// O arquivo de verdade resolve para ele mesmo.
+	if obtido := resolverLink(real); obtido != esperado {
+		t.Errorf("mexeu num caminho que já era o final: %q", obtido)
 	}
 }
