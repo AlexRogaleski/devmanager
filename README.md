@@ -255,6 +255,25 @@ histórico de terminal é do desenvolvedor, não do repositório. Sair com `exit
 devolve o terminal como estava, e nada é acrescentado ao seu `.bashrc` ou
 `.zshrc`.
 
+### Banco de dados
+
+```sh
+devm db dump                  # <projeto>-2026-09-22-1530.sql
+devm db dump copia.sql        # ou o nome que você quiser
+devm db restore copia.sql     # recria o banco e aplica o arquivo
+devm db restore copia.sql --keep   # aplica por cima, sem recriar
+```
+
+O serviço e o banco saem do projeto: o `devmanager.yaml` diz qual serviço, e
+o `DB_DATABASE` do `.env` diz qual banco — nada de decorar nome de contêiner,
+cliente do dialeto e senha.
+
+O `restore` **recria o banco** antes de aplicar, e por isso pergunta antes.
+Aplicar um dump sobre um banco que já tem as tabelas produz uma cascata de
+"already exists" na qual um erro de verdade passa despercebido; começar do
+zero torna o resultado previsível. O `--keep` serve para dumps parciais, que
+devem mesmo entrar por cima.
+
 ### Serviços
 
 No projeto — mexe no `devmanager.yaml`, versionado junto com o código:

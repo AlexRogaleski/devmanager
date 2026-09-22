@@ -88,6 +88,8 @@ func Run(args []string, stdio IO) error {
 	case "composer":
 		return composerCmd(stdio, resto)
 
+	case "db":
+		return dbCmd(stdio, resto)
 	case "service", "services":
 		return serviceCmd(stdio, resto)
 
@@ -132,6 +134,10 @@ Execução (usa o PHP exigido pelo projeto da pasta atual):
   composer   roda o composer
   run        roda qualquer comando com o PHP do projeto no PATH
   shell      abre um shell com o ambiente do projeto e histórico próprio
+
+Banco de dados (do projeto da pasta atual):
+  db dump      copia o banco para um arquivo .sql
+  db restore   recria o banco e aplica um arquivo .sql
 
 Serviços:
   service add      declara um serviço no projeto (devmanager.yaml)
