@@ -67,6 +67,10 @@ func Run(args []string, stdio IO) error {
 		return startCmd(stdio, resto)
 	case "ps":
 		return psCmd(stdio.Out, resto)
+	case "restart":
+		return restartCmd(stdio.Out, resto)
+	case "open":
+		return openCmd(stdio.Out, resto)
 	case "stop":
 		return stopCmd(stdio.Out, resto)
 	case "logs":
@@ -128,6 +132,8 @@ Projetos:
   up         prepara o projeto para rodar (dependências, .env, chave)
   start      sobe os processos do projeto (-d para segundo plano)
   ps         mostra os ambientes rodando em segundo plano
+  restart    derruba e sobe de novo, com as mesmas opções
+  open       abre o projeto no navegador
   stop       derruba um ambiente (--all para todos)
   logs       mostra os logs de um ambiente (-f para acompanhar)
 
@@ -140,6 +146,7 @@ Execução (usa o PHP exigido pelo projeto da pasta atual):
 Banco de dados (do projeto da pasta atual):
   db dump      copia o banco para um arquivo .sql
   db restore   recria o banco e aplica um arquivo .sql
+  db shell     abre o cliente do banco (psql, mysql, sqlite3)
 
 Serviços:
   service add      declara um serviço no projeto (devmanager.yaml)

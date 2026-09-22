@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"os"
 	"time"
-
-	"github.com/AlexRogaleski/devmanager/internal/proxy"
 )
 
 // rotas monta o roteador da API.
@@ -24,6 +22,7 @@ func (s *Servidor) rotas() http.Handler {
 	mux.HandleFunc("GET /"+Versao+"/proxy", s.rotaProxy)
 	mux.HandleFunc("POST /"+Versao+"/environments/{nome}/start", s.rotaStart)
 	mux.HandleFunc("POST /"+Versao+"/environments/{nome}/stop", s.rotaStop)
+	mux.HandleFunc("POST /"+Versao+"/environments/{nome}/restart", s.rotaRestart)
 	mux.HandleFunc("GET /"+Versao+"/environments/{nome}/logs", s.rotaLogs)
 
 	// Qualquer outro caminho: 404 com corpo JSON, para o cliente distinguir
@@ -103,14 +102,11 @@ func (s *Servidor) rotaStart(w http.ResponseWriter, r *http.Request) {
 
 	// A rota só entra DEPOIS do ambiente estar de pé. Registrá-la antes
 	// faria o proxy anunciar um domínio que responderia 502.
-	instantaneo := amb.snapshot()
-	if instantaneo.Dominio != "" && instantaneo.Porta != 0 {
-		s.tabela.Definir(proxy.Rota{
-			Dominio: instantaneo.Dominio,
-			Porta:   instantaneo.Porta,
-			Projeto: nome,
-		})
-	}
+	s.registrarRota(nome, amb)
+
+	// Anotado para voltar sozinho: um daemon reiniciado — por atualização,
+	// por reboot — devolve o ambiente onde estava.
+	s.anotarIntencao(nome, pedido)
 
 	s.logf("ambiente %q iniciado", nome)
 	escreverJSON(w, http.StatusOK, amb.snapshot())
@@ -135,6 +131,10 @@ func (s *Servidor) rotaStop(w http.ResponseWriter, r *http.Request) {
 		s.tabela.Remover(dominio)
 	}
 
+	// Parar é deliberado: o daemon não deve ressuscitar amanhã o que alguém
+	// derrubou hoje.
+	s.esquecerIntencao(nome)
+
 	amb.cancelar()
 
 	select {
@@ -149,6 +149,66 @@ func (s *Servidor) rotaStop(w http.ResponseWriter, r *http.Request) {
 	instantaneo := amb.snapshot()
 	instantaneo.ServicosParados = s.pararServicosOciosos(r.Context())
 	escreverJSON(w, http.StatusOK, instantaneo)
+}
+
+// rotaRestart derruba e sobe de novo, com as MESMAS opções de antes.
+//
+// Isso é o que o `devm stop && devm start` não faz: quem subiu com
+// `--only serve` perderia a escolha no caminho, e descobriria com o vite
+// rodando sem ter pedido.
+func (s *Servidor) rotaRestart(w http.ResponseWriter, r *http.Request) {
+	nome := r.PathValue("nome")
+
+	pedido := PedidoStart{}
+	for _, i := range lerIntencoes() {
+		if i.Projeto == nome {
+			pedido = i.Pedido
+			break
+		}
+	}
+
+	s.mu.Lock()
+	amb, existe := s.ambientes[nome]
+	if existe {
+		delete(s.ambientes, nome)
+	}
+	s.mu.Unlock()
+
+	if existe {
+		if dominio := amb.snapshot().Dominio; dominio != "" {
+			s.tabela.Remover(dominio)
+		}
+		amb.cancelar()
+
+		select {
+		case <-amb.encerrado:
+		case <-time.After(20 * time.Second):
+			s.logf("aviso: %s não encerrou a tempo", nome)
+		}
+		amb.anel.Fechar()
+	}
+
+	projeto, err := localizarProjeto(nome)
+	if err != nil {
+		escreverErro(w, http.StatusNotFound, err)
+		return
+	}
+
+	novo, err := s.subir(r.Context(), projeto.Caminho, nome, pedido)
+	if err != nil {
+		escreverErro(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	s.mu.Lock()
+	s.ambientes[nome] = novo
+	s.mu.Unlock()
+
+	s.registrarRota(nome, novo)
+	s.anotarIntencao(nome, pedido)
+
+	s.logf("ambiente %q reiniciado", nome)
+	escreverJSON(w, http.StatusOK, novo.snapshot())
 }
 
 // rotaLogs devolve o histórico e, com ?follow=1, continua transmitindo.

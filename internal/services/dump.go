@@ -84,6 +84,42 @@ func (m *Manager) RecriarBanco(ctx context.Context, spec Spec, banco string) err
 	return fmt.Errorf("%s não é um banco de dados", spec.Nome)
 }
 
+// Shell abre o cliente interativo do banco, ligado ao terminal de quem chamou.
+//
+// O -it é o que faz o psql desenhar o prompt e aceitar Ctrl+C sem matar o
+// contêiner; sem ele o cliente abre em modo não interativo e sai na hora.
+func (m *Manager) Shell(ctx context.Context, spec Spec, banco string, entrada io.Reader, saida, erros io.Writer) error {
+	if !nomeDeBancoValido.MatchString(banco) {
+		return fmt.Errorf("nome de banco inválido: %q", banco)
+	}
+
+	args, err := comandoDeShell(spec, banco)
+	if err != nil {
+		return err
+	}
+
+	completo := append([]string{"exec", "-it", spec.Container()}, args...)
+	cmd := exec.CommandContext(ctx, m.Engine.Bin, completo...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = entrada, saida, erros
+	return cmd.Run()
+}
+
+func comandoDeShell(spec Spec, banco string) ([]string, error) {
+	switch spec.Banco {
+	case BancoPostgres:
+		usuario := spec.Env["POSTGRES_USER"]
+		if usuario == "" {
+			usuario = "postgres"
+		}
+		return []string{"psql", "-U", usuario, "-d", banco}, nil
+
+	case BancoMySQL, BancoMariaDB:
+		cliente, senha := clienteMySQL(spec)
+		return []string{cliente, "-uroot", "-p" + senha, banco}, nil
+	}
+	return nil, fmt.Errorf("%s não é um banco de dados", spec.Nome)
+}
+
 func comandoDeDump(spec Spec, banco string) ([]string, error) {
 	switch spec.Banco {
 	case BancoPostgres:

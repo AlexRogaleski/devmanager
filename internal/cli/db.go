@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -27,7 +28,7 @@ import (
 // sabe — o projeto declara o serviço, e o .env diz o banco.
 func dbCmd(stdio IO, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprint(stdio.Out, "uso: devm db <dump|restore> [argumentos]\n")
+		fmt.Fprint(stdio.Out, "uso: devm db <dump|restore|shell> [argumentos]\n")
 		return nil
 	}
 
@@ -36,6 +37,8 @@ func dbCmd(stdio IO, args []string) error {
 		return dbDumpCmd(stdio, args[1:])
 	case "restore":
 		return dbRestoreCmd(stdio, args[1:])
+	case "shell":
+		return dbShellCmd(stdio, args[1:])
 	default:
 		return fmt.Errorf("subcomando desconhecido: db %q", args[0])
 	}
@@ -191,6 +194,53 @@ func confirmado(stdio IO) bool {
 
 	resposta := strings.ToLower(strings.TrimSpace(linha))
 	return resposta == "s" || resposta == "sim"
+}
+
+// dbShellCmd abre o cliente do banco do projeto.
+//
+//	devm db shell
+//
+// A alternativa é montar à mão o `docker exec -it`, com nome de contêiner,
+// cliente do dialeto, usuário e senha — tudo que o projeto já declara.
+func dbShellCmd(stdio IO, args []string) error {
+	fs := flag.NewFlagSet("db shell", flag.ContinueOnError)
+	fs.SetOutput(stdio.Out)
+
+	if _, err := parseArgs(fs, args); err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	alvo, err := bancoDoProjeto(ctx, stdio.Out)
+	if err != nil {
+		return err
+	}
+
+	if alvo.ehSQLite() {
+		return shellSQLite(stdio, alvo.arquivo)
+	}
+
+	fmt.Fprintf(stdio.Out, "conectando em %s  (Ctrl+D para sair)\n", alvo.descricao())
+	return alvo.manager.Shell(ctx, alvo.spec, alvo.banco, os.Stdin, os.Stdout, os.Stderr)
+}
+
+// shellSQLite abre o sqlite3, quando ele existe na máquina.
+//
+// Diferente dos outros dialetos, aqui não há contêiner com o cliente dentro:
+// o banco é um arquivo local, e quem abre é um programa do sistema.
+func shellSQLite(stdio IO, arquivo string) error {
+	caminho, err := exec.LookPath("sqlite3")
+	if err != nil {
+		return fmt.Errorf("o sqlite3 não está instalado nesta máquina\n"+
+			"  o banco do projeto é %s\n"+
+			"  instale o sqlite3, ou use `devm artisan tinker` para consultar pelo Eloquent", arquivo)
+	}
+
+	fmt.Fprintf(stdio.Out, "conectando em %s  (.quit para sair)\n", arquivo)
+
+	cmd := exec.Command(caminho, arquivo)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
 }
 
 // alvoDeBanco reúne o que é preciso para falar com o banco do projeto.

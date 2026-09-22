@@ -97,6 +97,13 @@ func (c *Cliente) Start(ctx context.Context, nome string, pedido daemon.PedidoSt
 	return amb, err
 }
 
+// Restart derruba e sobe de novo, preservando as opções do start original.
+func (c *Cliente) Restart(ctx context.Context, nome string) (daemon.Ambiente, error) {
+	var amb daemon.Ambiente
+	err := c.pedir(ctx, http.MethodPost, "/environments/"+nome+"/restart", nil, &amb)
+	return amb, err
+}
+
 func (c *Cliente) Stop(ctx context.Context, nome string) (daemon.Ambiente, error) {
 	var amb daemon.Ambiente
 	err := c.pedir(ctx, http.MethodPost, "/environments/"+nome+"/stop", nil, &amb)

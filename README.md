@@ -226,9 +226,18 @@ devm list            # projetos registrados e o estado de cada um
 devm up          # dependências, .env, chave, serviços, banco do projeto
 devm start -d    # sobe servidor e frontend em segundo plano
 devm ps          # o que está rodando
+devm restart     # derruba e sobe de novo, com as mesmas opções
+devm open        # abre o projeto no navegador
 devm logs minha-app -f
 devm stop minha-app
 ```
+
+Os ambientes voltam sozinhos quando o daemon reinicia — por atualização, por
+reboot. O que o daemon guarda é a INTENÇÃO (quais projetos você pediu para
+subir, com quais opções), não o estado: um daemon que caiu não tem processo
+nenhum de pé, e um arquivo dizendo o contrário seria mentira. Parar um
+ambiente com `devm stop` o tira dessa lista — derrubar de propósito é
+definitivo.
 
 `devm up` é idempotente: rodar de novo não reescreve nada que já esteja certo.
 Ele instala dependências, cria o `.env` e a chave, sobe os serviços declarados,
@@ -273,6 +282,7 @@ devolve o terminal como estava, e nada é acrescentado ao seu `.bashrc` ou
 ### Banco de dados
 
 ```sh
+devm db shell                 # psql, mysql ou sqlite3, já conectado
 devm db dump                  # <projeto>-2026-09-22-1530.sql
 devm db dump copia.sql        # ou o nome que você quiser
 devm db restore copia.sql     # recria o banco e aplica o arquivo
@@ -512,7 +522,6 @@ depois de os dois sistemas passarem.
   Projetos legados em 7.x ficam fora do alcance.
 - **Porta 80 disputada.** Se outro servidor já a ocupa, o proxy cai para 8080
   e avisa. HTTP e HTTPS caem de forma independente.
-- **Reiniciar o daemon derruba todos os ambientes.** Eles não voltam sozinhos;
   `devm start -d <projeto>` religa.
 - **No macOS, processos podem ficar órfãos se o daemon morrer de repente.** O
   Linux mata os processos dos projetos junto com o daemon; o macOS não tem

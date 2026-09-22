@@ -265,6 +265,11 @@ func (s *Servidor) Servir(ctx context.Context) error {
 
 	s.logf("daemon ouvindo em %s (pid %d)", s.Socket, os.Getpid())
 
+	// A restauração roda em goroutine: subir ambientes pode levar minutos
+	// (imagem a baixar, banco a inicializar), e o daemon precisa atender
+	// `devm ps` desde o primeiro segundo.
+	go s.Restaurar(ctx)
+
 	select {
 	case err := <-erros:
 		return err

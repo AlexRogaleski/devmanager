@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"io"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -111,5 +112,65 @@ func TestEncerrarEsqueceOsAmbientes(t *testing.T) {
 
 	if len(s.ambientes) != 0 {
 		t.Errorf("sobraram %d ambiente(s) depois de encerrar", len(s.ambientes))
+	}
+}
+
+// A lista de intenções é o que permite ao daemon voltar onde estava. Só o
+// que foi parado de propósito sai dela.
+func TestIntencoesSobemEDescem(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+
+	s := NovoServidor("/tmp/x.sock", "teste", io.Discard)
+
+	s.anotarIntencao("web", PedidoStart{Porta: 8000})
+	s.anotarIntencao("api", PedidoStart{Apenas: []string{"serve"}})
+
+	lista := lerIntencoes()
+	if len(lista) != 2 {
+		t.Fatalf("gravou %d intenção(ões)", len(lista))
+	}
+	// Ordem estável: o arquivo não muda sozinho entre execuções.
+	if lista[0].Projeto != "api" || lista[1].Projeto != "web" {
+		t.Errorf("ordem inesperada: %s, %s", lista[0].Projeto, lista[1].Projeto)
+	}
+	if lista[1].Pedido.Porta != 8000 {
+		t.Errorf("o pedido original se perdeu: %+v", lista[1].Pedido)
+	}
+	if len(lista[0].Pedido.Apenas) != 1 {
+		t.Errorf("o --only se perdeu: %+v", lista[0].Pedido)
+	}
+
+	// Subir de novo não duplica.
+	s.anotarIntencao("web", PedidoStart{})
+	if lista := lerIntencoes(); len(lista) != 2 {
+		t.Errorf("duplicou: %d entradas", len(lista))
+	}
+
+	s.esquecerIntencao("web")
+	lista = lerIntencoes()
+	if len(lista) != 1 || lista[0].Projeto != "api" {
+		t.Errorf("depois do stop sobrou: %+v", lista)
+	}
+}
+
+// Arquivo corrompido não pode impedir o daemon de subir: restaurar é
+// conveniência, não requisito.
+func TestIntencaoCorrompidaNaoQuebra(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", dir)
+
+	caminho, err := caminhoDaIntencao()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(caminho), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(caminho, []byte("{isto não é json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if lista := lerIntencoes(); lista != nil {
+		t.Errorf("lista = %+v, esperava nenhuma", lista)
 	}
 }

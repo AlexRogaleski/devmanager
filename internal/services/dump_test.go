@@ -73,3 +73,28 @@ func TestNomeDeBancoPerigosoERecusado(t *testing.T) {
 		}
 	}
 }
+
+func TestComandoDeShellPorDialeto(t *testing.T) {
+	casos := map[string]string{
+		"postgres:18": "psql -U laravel -d meu_app",
+		"mysql:8.4":   "mysql -uroot -psecret meu_app",
+		"mariadb:11":  "mariadb -uroot -psecret meu_app",
+	}
+
+	for texto, esperado := range casos {
+		spec, _ := ParseSpec(texto)
+		args, err := comandoDeShell(spec, "meu_app")
+		if err != nil {
+			t.Fatalf("%s: %v", texto, err)
+		}
+		if obtido := strings.Join(args, " "); obtido != esperado {
+			t.Errorf("%s → %q, esperava %q", texto, obtido, esperado)
+		}
+	}
+
+	// Serviço sem dialeto não tem cliente a abrir.
+	redis, _ := ParseSpec("redis")
+	if _, err := comandoDeShell(redis, "x"); err == nil {
+		t.Error("aceitou shell de serviço que não é banco")
+	}
+}
