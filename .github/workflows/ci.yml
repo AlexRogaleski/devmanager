@@ -124,6 +124,11 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          # O checkout padrão é raso e não traz o objeto da tag. Sem ele,
+          # `git tag -l --format=...` devolve vazio e a Release perderia
+          # justamente a parte que diz o que mudou.
+          fetch-depth: 0
 
       - uses: actions/setup-go@v6
         with:
@@ -142,6 +147,28 @@ jobs:
       # ARM64 e macOS Intel — precisa dizer isso a quem baixa.
       - name: Notas da versão
         run: |
+          # O que a versão MUDOU vem da mensagem da tag anotada. Escrever
+          # isso duas vezes — uma na tag, outra na Release — seria convite a
+          # divergirem, e a tag é o lugar que viaja junto com o código.
+          #
+          # Só tag ANOTADA vale. Numa tag leve, %(contents) cai na mensagem
+          # do commit apontado — que descreve uma mudança, não a versão, e
+          # publicaria "fix: typo" como nota de release. Sem mensagem
+          # própria, as notas ficam só com as instruções, como eram até
+          # aqui.
+          #
+          # O texto é renderizado como MARKDOWN. Um <NOME> solto vira HTML
+          # inválido e some da página: escreva entre crases na mensagem da
+          # tag.
+          : > dist/NOTAS.md
+          CORPO=
+          if [ "$(git cat-file -t "${{ github.ref_name }}" 2>/dev/null)" = "tag" ]; then
+            CORPO=$(git tag -l --format='%(contents:body)' "${{ github.ref_name }}")
+          fi
+          if [ -n "$CORPO" ]; then
+            printf '%s\n\n---\n\n' "$CORPO" >> dist/NOTAS.md
+          fi
+
           # O heredoc é CITADO ('FIM'), então o shell não interpreta nada do
           # que vem dentro. Isso não é preciosismo: o corpo é markdown, e
           # markdown usa backtick, que sem as aspas o shell leria como
@@ -150,7 +177,7 @@ jobs:
           #
           # A URL aparece duas vezes por isso. O ${{ github.ref_name }} não
           # precisa do shell: o Actions o substitui antes de o script rodar.
-          cat > dist/NOTAS.md <<'FIM'
+          cat >> dist/NOTAS.md <<'FIM'
           Binário estático, sem dependências de sistema. No Linux:
 
               curl -LO https://github.com/AlexRogaleski/devmanager/releases/download/${{ github.ref_name }}/devm-linux-amd64
