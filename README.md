@@ -281,7 +281,15 @@ devm db restore copia.sql --keep   # aplica por cima, sem recriar
 
 O serviço e o banco saem do projeto: o `devmanager.yaml` diz qual serviço, e
 o `DB_DATABASE` do `.env` diz qual banco — nada de decorar nome de contêiner,
-cliente do dialeto e senha.
+cliente do dialeto e senha. Funciona com PostgreSQL, MySQL, MariaDB e SQLite.
+
+Em SQLite o arquivo é o backup, e a cópia é feita com `VACUUM INTO`, não com
+um `cp`: quando o banco está em modo WAL, as escritas recentes vivem no
+arquivo `-wal` ao lado, e copiar só o `.sqlite` produziria um backup sem elas.
+
+O dump é sempre do mesmo dialeto — um arquivo do SQLite não se aplica num
+MySQL. Para trocar de banco, o caminho é rodar as migrações no destino e
+transferir os dados pela aplicação.
 
 O `restore` **recria o banco** antes de aplicar, e por isso pergunta antes.
 Aplicar um dump sobre um banco que já tem as tabelas produz uma cascata de

@@ -56,9 +56,22 @@ func dbDumpCmd(stdio IO, args []string) error {
 		return err
 	}
 
-	destino := fmt.Sprintf("%s-%s.sql", alvo.projeto, time.Now().Format("2006-01-02-1504"))
+	extensao := ".sql"
+	if alvo.ehSQLite() {
+		extensao = ".sqlite"
+	}
+
+	destino := fmt.Sprintf("%s-%s%s", alvo.projeto, time.Now().Format("2006-01-02-1504"), extensao)
 	if len(posicionais) > 0 {
 		destino = posicionais[0]
+	}
+
+	if alvo.ehSQLite() {
+		fmt.Fprintf(stdio.Out, "copiando %s...\n", alvo.arquivo)
+		if err := dumpSQLite(ctx, stdio, alvo.arquivo, destino); err != nil {
+			return err
+		}
+		return relatarArquivo(stdio.Out, destino)
 	}
 
 	// O arquivo é criado antes do comando rodar, mas só é renomeado no fim:
@@ -69,7 +82,7 @@ func dbDumpCmd(stdio IO, args []string) error {
 	}
 	defer os.Remove(tmp.Name())
 
-	fmt.Fprintf(stdio.Out, "copiando %s de %s:%s...\n", alvo.banco, alvo.spec.Nome, alvo.spec.Versao)
+	fmt.Fprintf(stdio.Out, "copiando %s...\n", alvo.descricao())
 
 	if err := alvo.manager.Dump(ctx, alvo.spec, alvo.banco, tmp); err != nil {
 		tmp.Close()
@@ -82,11 +95,16 @@ func dbDumpCmd(stdio IO, args []string) error {
 		return fmt.Errorf("gravando %s: %w", destino, err)
 	}
 
-	info, err := os.Stat(destino)
+	return relatarArquivo(stdio.Out, destino)
+}
+
+// relatarArquivo imprime o que foi gravado e o tamanho.
+func relatarArquivo(w io.Writer, caminho string) error {
+	info, err := os.Stat(caminho)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdio.Out, "%s  (%s)\n", destino, tamanhoLegivel(info.Size()))
+	fmt.Fprintf(w, "%s  (%s)\n", caminho, tamanhoLegivel(info.Size()))
 	return nil
 }
 
@@ -116,12 +134,30 @@ func dbRestoreCmd(stdio IO, args []string) error {
 		return err
 	}
 
+	if alvo.ehSQLite() {
+		if *manter {
+			return fmt.Errorf("--keep não vale para SQLite: restaurar é substituir o arquivo")
+		}
+		if !*semPerguntar {
+			fmt.Fprintf(stdio.Out, "isto SUBSTITUI o arquivo %s por %s.\n", alvo.arquivo, posicionais[0])
+			if !confirmado(stdio) {
+				fmt.Fprintln(stdio.Out, "cancelado")
+				return nil
+			}
+		}
+		if err := restoreSQLite(stdio, posicionais[0], alvo.arquivo); err != nil {
+			return err
+		}
+		fmt.Fprintln(stdio.Out, "pronto")
+		return nil
+	}
+
 	if !*manter {
 		// Apagar o banco é irreversível, e o comando é curto de digitar:
 		// a confirmação é a única coisa entre um engano e o dia perdido.
 		if !*semPerguntar {
-			fmt.Fprintf(stdio.Out, "isto APAGA o banco %q de %s:%s e aplica %s no lugar.\n",
-				alvo.banco, alvo.spec.Nome, alvo.spec.Versao, posicionais[0])
+			fmt.Fprintf(stdio.Out, "isto APAGA o banco %s e aplica %s no lugar.\n",
+				alvo.descricao(), posicionais[0])
 			if !confirmado(stdio) {
 				fmt.Fprintln(stdio.Out, "cancelado")
 				return nil
@@ -158,11 +194,27 @@ func confirmado(stdio IO) bool {
 }
 
 // alvoDeBanco reúne o que é preciso para falar com o banco do projeto.
+//
+// São dois mundos: um banco em contêiner, que se acessa pelo cliente do
+// dialeto, e um arquivo SQLite, que se copia. O campo preenchido diz qual.
 type alvoDeBanco struct {
 	projeto string
-	banco   string
+
+	banco   string // nome do banco no serviço
 	spec    services.Spec
 	manager *services.Manager
+
+	arquivo string // caminho do .sqlite, quando o projeto usa SQLite
+}
+
+func (a alvoDeBanco) ehSQLite() bool { return a.arquivo != "" }
+
+// descricao é como o alvo aparece nas mensagens.
+func (a alvoDeBanco) descricao() string {
+	if a.ehSQLite() {
+		return a.arquivo
+	}
+	return fmt.Sprintf("%s de %s:%s", a.banco, a.spec.Nome, a.spec.Versao)
 }
 
 // bancoDoProjeto descobre qual serviço e qual banco o projeto atual usa.
@@ -181,6 +233,19 @@ func bancoDoProjeto(ctx context.Context, w io.Writer) (alvoDeBanco, error) {
 		return alvoDeBanco{}, err
 	}
 
+	env, _ := dotenv.Load(filepath.Join(p.Path, ".env"))
+
+	// O .env manda: é ele que a aplicação lê. Um projeto pode ter declarado
+	// um serviço e ainda assim estar rodando em SQLite — e o dump tem de ser
+	// do banco que a aplicação abre, não do que o devmanager.yaml previa.
+	if strings.EqualFold(strings.TrimSpace(env["DB_CONNECTION"]), "sqlite") {
+		arquivo, temArquivo := caminhoSQLite(p.Path, env["DB_DATABASE"])
+		if !temArquivo {
+			return alvoDeBanco{}, fmt.Errorf("este projeto usa SQLite em memória: não há banco a copiar")
+		}
+		return alvoDeBanco{projeto: p.Name, arquivo: arquivo}, nil
+	}
+
 	var escolhida services.Spec
 	for _, spec := range specs {
 		if spec.Banco != services.BancoNenhum {
@@ -191,14 +256,13 @@ func bancoDoProjeto(ctx context.Context, w io.Writer) (alvoDeBanco, error) {
 	if escolhida.Nome == "" {
 		return alvoDeBanco{}, fmt.Errorf(
 			"este projeto não declara um banco de dados em %s\n"+
-				"  declare com:  devm service add postgres:18", "devmanager.yaml")
+				"  declare um com:  devm service add postgres:18\n"+
+				"  ou use SQLite:   DB_CONNECTION=sqlite no .env", "devmanager.yaml")
 	}
 
 	banco := services.NomeDeBanco(p.Name)
-	if env, err := dotenv.Load(filepath.Join(p.Path, ".env")); err == nil {
-		if declarado := strings.TrimSpace(env["DB_DATABASE"]); declarado != "" {
-			banco = declarado
-		}
+	if declarado := strings.TrimSpace(env["DB_DATABASE"]); declarado != "" {
+		banco = declarado
 	}
 
 	m, err := gerenciadorDeServicos(ctx, w)
