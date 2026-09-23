@@ -104,7 +104,7 @@ func Documento(c Contexto) string {
 	b.WriteString("\n## Ciclo de vida\n\n")
 	b.WriteString("```sh\n")
 	b.WriteString("devm up            # prepara: dependências, .env, chave, serviços\n")
-	b.WriteString("devm start -d      # sobe servidor e frontend em segundo plano\n")
+	b.WriteString("devm start         # sobe servidor e frontend em segundo plano\n")
 	b.WriteString("devm ps            # o que está rodando\n")
 	b.WriteString("devm logs " + nomeOuPadrao(c.Projeto) + " -f   # acompanha\n")
 	b.WriteString("devm stop " + nomeOuPadrao(c.Projeto) + "      # derruba\n")

@@ -69,7 +69,7 @@ func proxyStatusCmd(w io.Writer, args []string) error {
 	fmt.Fprintf(w, "https   :%d\n", info.PortaHTTPS)
 
 	if len(info.Dominios) == 0 {
-		fmt.Fprintln(w, "\nnenhum domínio ativo (suba um projeto com `devm start -d`)")
+		fmt.Fprintln(w, "\nnenhum domínio ativo (suba um projeto com `devm start`)")
 	} else {
 		fmt.Fprintln(w, "\ndomínios:")
 		for _, d := range info.Dominios {

@@ -51,7 +51,7 @@ func psCmd(w io.Writer, args []string) error {
 
 	if len(lista) == 0 {
 		fmt.Fprintln(w, "nenhum ambiente rodando")
-		fmt.Fprintln(w, "\nsuba um com `devm start -d` na pasta de um projeto")
+		fmt.Fprintln(w, "\nsuba um com `devm start` na pasta de um projeto")
 		return nil
 	}
 

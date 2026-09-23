@@ -142,7 +142,7 @@ func TestProxySemNenhumaRota(t *testing.T) {
 
 	p.Handler().ServeHTTP(rec, req)
 
-	if !strings.Contains(rec.Body.String(), "devm start -d") {
+	if !strings.Contains(rec.Body.String(), "devm start") {
 		t.Errorf("a resposta deveria orientar o próximo passo:\n%s", rec.Body.String())
 	}
 }

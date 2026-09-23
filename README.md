@@ -7,7 +7,7 @@ Ambiente de desenvolvimento local para projetos Laravel/PHP, sem um contêiner
 por projeto.
 
 ```
-$ devm start -d
+$ devm start
 minha-app rodando em segundo plano
   PHP        8.4.23
   serve      php artisan serve --host=127.0.0.1 --port=41859
@@ -224,7 +224,7 @@ devm list            # projetos registrados e o estado de cada um
 
 ```sh
 devm up          # dependências, .env, chave, serviços, banco do projeto
-devm start -d    # sobe servidor e frontend em segundo plano
+devm start       # sobe servidor e frontend em segundo plano (--attach fica no terminal)
 devm ps          # o que está rodando
 devm restart     # derruba e sobe de novo, com as mesmas opções
 devm open        # abre o projeto no navegador
@@ -522,7 +522,7 @@ depois de os dois sistemas passarem.
   Projetos legados em 7.x ficam fora do alcance.
 - **Porta 80 disputada.** Se outro servidor já a ocupa, o proxy cai para 8080
   e avisa. HTTP e HTTPS caem de forma independente.
-  `devm start -d <projeto>` religa.
+  `devm start <projeto>` religa.
 - **No macOS, processos podem ficar órfãos se o daemon morrer de repente.** O
   Linux mata os processos dos projetos junto com o daemon; o macOS não tem
   equivalente. Parar pelo `devm daemon stop` ou pelo Ctrl+C encerra tudo

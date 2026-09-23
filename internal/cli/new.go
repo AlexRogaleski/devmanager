@@ -251,7 +251,7 @@ func finalizarProjetoNovo(w io.Writer, destino string, php runtimes.Runtime, ver
 	fmt.Fprintf(w, "\npróximos passos:\n")
 	fmt.Fprintf(w, "  cd %s\n", filepath.Base(destino))
 	fmt.Fprintf(w, "  devm up          # serviços e banco, se você declarar algum\n")
-	fmt.Fprintf(w, "  devm start -d    # sobe o ambiente\n")
+	fmt.Fprintf(w, "  devm start       # sobe o ambiente\n")
 
 	if p, err := project.Detect(destino); err == nil && p.IsLaravel() {
 		fmt.Fprintf(w, "\ndepois: https://%s.test\n", nome)

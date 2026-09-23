@@ -130,7 +130,7 @@ Projetos:
   prune      limpa entradas de projetos que não existem mais
   detect     inspeciona uma pasta e descreve o projeto encontrado
   up         prepara o projeto para rodar (dependências, .env, chave)
-  start      sobe os processos do projeto (-d para segundo plano)
+  start      sobe os processos do projeto (--attach para ver no terminal)
   ps         mostra os ambientes rodando em segundo plano
   restart    derruba e sobe de novo, com as mesmas opções
   open       abre o projeto no navegador

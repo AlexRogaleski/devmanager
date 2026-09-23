@@ -344,7 +344,7 @@ func (p *Proxy) semRota(w http.ResponseWriter, r *http.Request) {
 	if len(rotas) == 0 {
 		paginaErro(w, http.StatusNotFound,
 			fmt.Sprintf("Nenhum projeto atende %s.", normalizar(r.Host)),
-			"Nenhum ambiente está rodando. Suba um com `devm start -d` na pasta de um projeto.")
+			"Nenhum ambiente está rodando. Suba um com `devm start` na pasta de um projeto.")
 		return
 	}
 

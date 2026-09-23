@@ -15,35 +15,75 @@ import (
 	"github.com/AlexRogaleski/devmanager/internal/supervisor"
 )
 
+// opcoesDoStart são as escolhas que o start aceita na linha de comando.
+type opcoesDoStart struct {
+	semNode bool
+	apenas  string
+	porta   int
+	listar  bool
+	juntar  bool
+
+	// obsoleto guarda o -d/--detach, que hoje não faz nada.
+	obsoleto bool
+}
+
+// noTerminal informa se o comando fica em primeiro plano.
+func (o *opcoesDoStart) noTerminal() bool { return o.juntar || o.listar }
+
+// registrarFlagsDoStart declara as flags e devolve onde os valores caem.
+func registrarFlagsDoStart(fs *flag.FlagSet) *opcoesDoStart {
+	var o opcoesDoStart
+
+	fs.BoolVar(&o.semNode, "no-node", false, "não sobe os processos de frontend")
+	fs.StringVar(&o.apenas, "only", "", "sobe apenas estes processos (separados por vírgula)")
+	fs.IntVar(&o.porta, "port", 0, "porta do servidor (padrão: uma porta livre)")
+	fs.BoolVar(&o.listar, "list", false, "mostra os processos configurados e sai")
+
+	fs.BoolVar(&o.juntar, "attach", false, "roda no terminal, mostrando os logs")
+	fs.BoolVar(&o.juntar, "a", false, "o mesmo que --attach")
+
+	// -d e --detach continuam aceitos e não fazem nada: eram o jeito de
+	// pedir o que agora é o padrão, e estão na memória dos dedos e em
+	// qualquer anotação antiga. Recusá-los seria pedir que a pessoa
+	// desaprendesse um hábito sem ganhar nada em troca.
+	fs.BoolVar(&o.obsoleto, "d", false, "obsoleto: o segundo plano já é o padrão")
+	fs.BoolVar(&o.obsoleto, "detach", false, "obsoleto: o segundo plano já é o padrão")
+
+	return &o
+}
+
 // startCmd sobe os processos de desenvolvimento do projeto.
 //
-//	devm start                   sobe tudo
+//	devm start                   sobe em segundo plano, via daemon
+//	devm start --attach          sobe no terminal, com os logs à vista
 //	devm start --only serve      sobe só um processo
 //	devm start --port 8080       força a porta do servidor
 //	devm start --list            mostra o que subiria, sem subir
+//
+// O padrão é o segundo plano porque é o uso comum: quem sobe o ambiente
+// quer o terminal de volta para trabalhar. Os logs continuam a um comando
+// de distância (`devm logs -f`), e quem quiser o comportamento de antes usa
+// --attach.
 func startCmd(stdio IO, args []string) error {
 	fs := flag.NewFlagSet("start", flag.ContinueOnError)
 	fs.SetOutput(stdio.Out)
 
-	semNode := fs.Bool("no-node", false, "não sobe os processos de frontend")
-	apenas := fs.String("only", "", "sobe apenas estes processos (separados por vírgula)")
-	porta := fs.Int("port", 0, "porta do servidor (padrão: uma porta livre)")
-	listar := fs.Bool("list", false, "mostra os processos configurados e sai")
-	destacar := fs.Bool("d", false, "sobe em segundo plano, via daemon")
-	fs.BoolVar(destacar, "detach", false, "o mesmo que -d")
+	o := registrarFlagsDoStart(fs)
 
 	posicionais, err := parseArgs(fs, args)
 	if err != nil {
 		return err
 	}
 
-	if *destacar {
-		return startDestacadoCmd(stdio, posicionais, *porta, *apenas, *semNode)
+	if !o.noTerminal() {
+		return startDestacadoCmd(stdio, posicionais, o.porta, o.apenas, o.semNode)
 	}
 	if len(posicionais) > 0 {
-		return fmt.Errorf("o start em primeiro plano roda o projeto da pasta atual\n" +
-			"  para subir outro projeto pelo nome, use `devm start -d <projeto>`")
+		return fmt.Errorf("este modo roda o projeto da pasta atual\n" +
+			"  para subir outro projeto pelo nome, use `devm start <projeto>`")
 	}
+
+	apenas, porta, listar := &o.apenas, &o.porta, &o.listar
 
 	p, r, errAmb := ambienteDoProjeto()
 	if errAmb != nil {

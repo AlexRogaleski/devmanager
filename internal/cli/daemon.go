@@ -158,7 +158,7 @@ func daemonStopCmd(w io.Writer, args []string) error {
 		}
 		fmt.Fprintln(w, "\npara subir de novo depois:")
 		for _, a := range ambientes {
-			fmt.Fprintf(w, "  devm start -d %s\n", a.Projeto)
+			fmt.Fprintf(w, "  devm start %s\n", a.Projeto)
 		}
 		fmt.Fprintln(w)
 	}

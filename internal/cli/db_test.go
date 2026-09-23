@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"flag"
+	"io"
 	"strings"
 	"testing"
 )
@@ -71,5 +73,49 @@ func TestUpgradeReconheceBuildLocal(t *testing.T) {
 		if obtido := compararVersoes(instalada, "v0.5.0"); obtido != esperado {
 			t.Errorf("%q → %v, esperava %v", instalada, obtido, esperado)
 		}
+	}
+}
+
+// O segundo plano virou o padrão; --attach traz de volta o terminal.
+func TestModoDoStart(t *testing.T) {
+	casos := []struct {
+		args       []string
+		noTerminal bool
+	}{
+		{nil, false}, // padrão: segundo plano
+		{[]string{"--attach"}, true},
+		{[]string{"-a"}, true},
+		{[]string{"--list"}, true}, // listar não sobe nada
+		{[]string{"-d"}, false},    // hábito antigo: segue valendo
+		{[]string{"--detach"}, false},
+		{[]string{"-d", "--attach"}, true}, // o pedido explícito vence
+	}
+
+	for _, c := range casos {
+		fs := flag.NewFlagSet("start", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		o := registrarFlagsDoStart(fs)
+
+		if err := fs.Parse(c.args); err != nil {
+			t.Errorf("%v: %v", c.args, err)
+			continue
+		}
+		if obtido := o.noTerminal(); obtido != c.noTerminal {
+			t.Errorf("%v: noTerminal = %v, esperava %v", c.args, obtido, c.noTerminal)
+		}
+	}
+}
+
+// As opções de sempre continuam chegando onde devem.
+func TestFlagsDoStartPreservadas(t *testing.T) {
+	fs := flag.NewFlagSet("start", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	o := registrarFlagsDoStart(fs)
+
+	if err := fs.Parse([]string{"--only", "serve,queue", "--port", "8080", "--no-node"}); err != nil {
+		t.Fatal(err)
+	}
+	if o.apenas != "serve,queue" || o.porta != 8080 || !o.semNode {
+		t.Errorf("opções lidas: %+v", o)
 	}
 }

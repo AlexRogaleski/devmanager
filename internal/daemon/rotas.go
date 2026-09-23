@@ -56,7 +56,7 @@ func (s *Servidor) rotaStart(w http.ResponseWriter, r *http.Request) {
 	nome := r.PathValue("nome")
 
 	var pedido PedidoStart
-	// Corpo vazio é legítimo: `devm start -d` sem opções nenhuma. Só um
+	// Corpo vazio é legítimo: `devm start` sem opções nenhuma. Só um
 	// corpo presente e malformado é erro.
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&pedido); err != nil {
